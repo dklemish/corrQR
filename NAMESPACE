@@ -1,0 +1,7 @@
+exportPattern("^[[:alpha:]]+")
+
+useDynLib(corrQR)
+
+importFrom(qrjoint, qrjoint)
+importFrom(qrjoint, chull.center)
+importFrom(Rcpp, evalCpp)
