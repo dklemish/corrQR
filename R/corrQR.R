@@ -161,7 +161,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   # ncorr = number of correlation parameters for Gaussian copula
   npar <- (nknots+1) * (p+1) + 2
   niter  <- nsamp * thin
-  ncorr <- q*(q+1)/2
+  ncorr <- q*(q-1)/2
 
   tot.par <- q*npar + ncorr
 
@@ -205,9 +205,6 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
       )
     )
   }
-
-  # Initialize copula parameters
-  par[q*npar + 1:ncorr] <- diag(q)[upper.tri(diag(q), diag=TRUE)]
 
   # Build list that contains which indices of parameter vector
   # should be updated in each block update in each MCMC iteration
