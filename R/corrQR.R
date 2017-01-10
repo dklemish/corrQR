@@ -27,7 +27,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   #       lambda, the GP rescaling factor
   #   * kappa -
   # shrink -
-  # prox.range -
+  # prox.range - corresponds to range for rho(lambda) (see section 3.2)
   # acpt.target -
   # ref.size -
   # blocking - option for how to block parameters in MCMC updates
@@ -55,8 +55,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   x <- scale(x, chull.center(x))
 
   # Map selected copula to numeric code
-  if(copula == "gaussian") copulaMethod <- 1
-
+  # if(copula == "gaussian") copulaMethod <- 1
 
   # Determine the grid of quantiles of interest as multiples of 0.01
   # plus additional points in the tail based on the # of data points
@@ -125,7 +124,8 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   d.kk <- abs(outer(tau.k, tau.k, "-"))^expo
 
   # gridmats = GP parameters to pass to MCMC
-  #  ith column contains
+  #  ith column contains A_g, R_g, the log determinant of R_g, and the
+  #  log prior density for that value of lambda
   gridmats <- matrix(NA, nknots*(L + nknots)+2, ngrid)
 
   K0 <- 0
@@ -182,7 +182,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   #    q*npar_j + 1 = 1 parameter copula parameter
 
   if(initPar[1] == "prior") {
-    par <- rep(0, q*npar + 1)
+    par <- rep(0, q*npar + q*(q-1)/2)
     if(fix.nu) par[npar * 1:q] <- nuFn.inv(fix.nu)
 
     for(j in 1:q){
@@ -220,7 +220,10 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
     }
   } else if (initPar[1] == "RQ"){
 
-    par <- rep(0, q*npar + 1)
+    # par contains MCMC parameters to track
+    #  - npar paramters for each response
+    #  - q*(q-1)/2 correlation parameters for Gaussian copula
+    par <- rep(0, q*npar + q*(q-1)/2)
 
     for(j in 1:q){
       # Initialize gamma parameters
@@ -487,146 +490,17 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   return(oo)
 }
 
-update.corrQR <- function(object, nadd, append = TRUE, ...){
-  niter <- object$dim[8]; thin <- object$dim[9]; nsamp <- object$dim[10]
-  if(missing(nadd)) nadd <- nsamp
-  par <- object$par; npar <- length(par)
-  dimpars <- object$dim
-  dimpars[8] <- nadd * thin
-  dimpars[10] <- nadd
-  nblocks <- object$imcmcpar[1]
-  object$imcmcpar[4] <- max(10, nadd * thin/1e4)
-
-  tm.c <- system.time(oo <- .C("BJQR", par = as.double(par), x = as.double(object$x), y = as.double(object$y), cens = as.integer(object$cens),
-                               shrink = as.integer(object$shrink), hyper = as.double(object$hyper), dim = as.integer(dimpars), gridmats = as.double(object$gridmats),
-                               tau.g = as.double(object$tau.g), muV = as.double(object$muV), SV = as.double(object$SV), blocks = as.integer(object$blocks),
-                               blocks.size = as.integer(object$blocks.size), dmcmcpar = as.double(object$dmcmcpar),
-                               imcmcpar = as.integer(object$imcmcpar), parsamp = double(nadd * npar),
-                               acptsamp = double(nadd * nblocks), lpsamp = double(nadd)))
-  cat("elapsed time:", round(tm.c[3]), "seconds\n")
-
-  oo$x <- object$x; oo$y <- object$y; oo$xnames <- object$xnames; oo$gridmats <- object$gridmats; oo$prox <- object$prox; oo$reg.ix <- object$reg.ix; oo$runtime <- object$runtime+tm.c[3]
-  if(append){
-    oo$dim[8] <- niter + nadd * thin
-    oo$dim[10] <- nsamp + nadd
-    oo$parsamp <- c(object$parsamp, oo$parsamp)
-    oo$acptsamp <- c(object$acptsamp, oo$acptsamp)
-    oo$lpsamp <- c(object$lpsamp, oo$lpsamp)
-  }
-  class(oo) <- "qrjoint"
-  return(oo)
-}
-
-coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
-  niter <- object$dim[8]
-  nsamp <- object$dim[10]
-  pars <- matrix(object$parsamp, ncol = nsamp)
-  ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
-
-  n <- object$dim[1]; p <- object$dim[2]; L <- object$dim[3]; mid <- object$dim[4] + 1; nknots <- object$dim[5]; ngrid <- object$dim[6]
-  a.sig <- object$hyper[1:2]; a.kap <- matrix(object$hyper[-c(1:2)], nrow = 3)
-  tau.g <- object$tau.g; reg.ix <- object$reg.ix
-  x.ce <- outer(rep(1, L), attr(object$x, "scaled:center")); x.sc <- outer(rep(1,L), attr(object$x, "scaled:scale"))
-
-  beta.samp <- apply(pars[,ss], 2, function(p1) c(estFn(p1, object$x, object$y, object$gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce, x.ce, x.sc)))
-
-  if(reduce) tau.g <- tau.g[reg.ix]
-  L <- length(tau.g)
-  if(plot){
-    nr <- ceiling(sqrt(p+show.intercept)); nc <- ceiling((p+show.intercept)/nr)
-    par(mfrow = c(nr, nc))
-  }
-  reach <- 0
-  beta.hat <- list()
-  plot.titles <- c("Intercept", object$xnames)
-  j <- 1
-  b <- beta.samp[reach + 1:L,]
-  beta.hat[[j]] <- getBands(b, plot = (plot & show.intercept), add = FALSE, x = tau.g, xlab = "tau", ylab = "Coefficient", bty = "n", ...)
-  if(plot & show.intercept) title(main = plot.titles[j])
-  reach <- reach + L
-  for(j in 2:(p+1)){
-    b <- beta.samp[reach + 1:L,]
-    beta.hat[[j]] <- getBands(b, plot = plot, add = FALSE, x = tau.g, xlab = "tau", ylab = "Coefficient", bty = "n", ...)
-    if(plot) {
-      title(main = plot.titles[j])
-      abline(h = 0, lty = 2, col = 4)
-    }
-    reach <- reach + L
-  }
-  names(beta.hat) <- plot.titles
-  invisible(list(beta.samp = beta.samp, beta.est = beta.hat))
-}
-
-summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details = FALSE, ...){
-  thin <- object$dim[9]
-  nsamp <- object$dim[10]
-  pars <- matrix(object$parsamp, ncol = nsamp)
-  ss <- unique(pmax(1, round(nsamp * (1:ntrace/ntrace))))
-  dimpars <- object$dim
-  dimpars[8] <- length(ss)
-
-  n <- object$dim[1]; p <- object$dim[2]; ngrid <- object$dim[6]
-  sm <- .C("DEV", pars = as.double(pars[,ss]), x = as.double(object$x), y = as.double(object$y), cens = as.integer(object$cens),
-           shrink = as.integer(object$shrink), hyper = as.double(object$hyper), dim = as.integer(dimpars), gridmats = as.double(object$gridmats), tau.g = as.double(object$tau.g),
-           devsamp = double(length(ss)), llsamp = double(length(ss)*n), pgsamp = double(length(ss)*ngrid*(p+1)))
-  deviance <- sm$devsamp
-  ll <- matrix(sm$llsamp, ncol = length(ss))
-  fit.waic <- waic(ll)
-  pg <- matrix(sm$pgsamp, ncol = length(ss))
-  prox.samp <- matrix(NA, p+1, length(ss))
-  for(i in 1:(p+1)){
-    prox.samp[i,] <- object$prox[apply(pg[(i-1)*ngrid + 1:ngrid,], 2, function(pr) sample(length(pr), 1, prob = pr))]
-  }
-
-  if(more.details) par(mfrow = c(2,2), mar = c(5,4,3,2)+.1)
-  if(plot.dev){
-    plot(thin * ss, deviance, ty = "l", xlab = "Markov chain iteration", ylab = "Deviance", bty = "n", main = "Fit trace plot", ...)
-    grid(col = "gray")
-  }
-
-  if(more.details){
-    ngrid <- length(object$prox)
-    prior.grid <- exp(object$gridmats[nrow(object$gridmats),])
-    lam.priorsamp <- lamFn(sample(object$prox, ntrace, replace = TRUE, prob = prior.grid))
-    lam.prior.q <- quantile(lam.priorsamp, pr = c(.025, .5, .975))
-    lam.samp <- lamFn(prox.samp)
-    a <- min(lamFn(object$prox))
-    b <- diff(range(lamFn(object$prox))) * 1.2
-    plot(thin * ss, lam.samp[1,], ty = "n", ylim = a + c(0, b * (p + 1)), bty = "n", ann = FALSE, axes = FALSE)
-    axis(1)
-    for(i in 1:(p+1)){
-      abline(h = b * (i-1) + lamFn(object$prox), col = "gray")
-      abline(h = b * (i - 1) + lam.prior.q, col = "red", lty = c(2,1,2))
-      lines(thin * ss, b * (i-1) + lam.samp[i,], lwd = 1, col = 4)
-      if(i %% 2) axis(2, at = b * (i-1) + lamFn(object$prox[c(1,ngrid)]), labels = round(object$prox[c(1,ngrid)],2), las = 1, cex.axis = 0.6)
-      mtext(substitute(beta[index], list(index = i - 1)), side = 4, line = 0.5, at = a + b * (i - 1) + 0.4*b, las = 1)
-    }
-    title(xlab = "Markov chain iteration", ylab = "Proxmity posterior", main = "Mixing over GP scaling")
-
-    theta <- as.mcmc(t(matrix(object$parsamp, ncol = nsamp)[,unique(ceiling(seq(0.5*nsamp,nsamp,1)))]))
-    gg <- geweke.diag(theta, .1, .5)
-    zvals <- gg$z
-
-    pp <- 2 * (1 - pnorm(abs(zvals)))
-    plot(sort(pp), ylab = "Geweke p-values", xlab = "Parameter index (reordered)", main = "Convergence diagnosis", ty = "h", col = 4, ylim = c(0, 0.3), lwd = 2)
-    abline(h = 0.05, col = 2, lty = 2)
-    abline(a = 0, b = 0.1 / length(pp), col = 2, lty = 2)
-    mtext(c("BH-10%", "5%"), side = 4, at = c(0.1, 0.05), line = 0.1, las = 0, cex = 0.6)
-
-    npar <- length(object$par)
-    image(1:npar, 1:npar, cor(theta), xlab = "Parameter index", ylab = "Parameter index", main = "Parameter correlation")
-
-  }
-  invisible(list(deviance = deviance, pg = pg, prox = prox.samp, ll = ll, waic = fit.waic))
-}
-
 estFn <- function(par, x, y, gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce = TRUE, x.ce = 0, x.sc = 1){
 
-  n <- length(y); p <- ncol(x)
+  n <- length(y)
+  p <- ncol(x)
+
   wKnot <- matrix(par[1:(nknots*(p+1))], nrow = nknots)
-  w0PP <- ppFn0(wKnot[,1], gridmats, L, nknots, ngrid)
-  w0 <- w0PP$w
-  wPP <- apply(wKnot[,-1,drop=FALSE], 2, ppFn, gridmats = gridmats, L = L, nknots = nknots, ngrid = ngrid, a.kap = a.kap)
+  w0PP  <- ppFn0(wKnot[,1], gridmats, L, nknots, ngrid)
+  w0    <- w0PP$w
+
+  wPP   <- apply(wKnot[,-1,drop=FALSE], 2, ppFn, gridmats = gridmats, L = L, nknots = nknots, ngrid = ngrid, a.kap = a.kap)
+
   vMat <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
 
   zeta0.dot <- exp(shrinkFn(p) * (w0 - max(w0)))
@@ -662,44 +536,6 @@ estFn <- function(par, x, y, gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.
   betas <- cbind(beta0.hat, beta.hat)
   if(reduce) betas <- betas[reg.ix,,drop = FALSE]
   return(betas)
-}
-
-chull.center <- function (x, maxEPts = ncol(x) + 1, plot = FALSE){
-  sx <- as.matrix(apply(x, 2, function(s) punif(s, min(s), max(s))))
-  dd <- rowSums(scale(sx)^2)
-  ix.dd <- order(dd, decreasing = TRUE)
-  sx <- sx[ix.dd, , drop = FALSE]
-  x.chol <- inchol(sx, maxiter = maxEPts)
-  ix.epts <- ix.dd[pivots(x.chol)]
-  x.choose <- x[ix.epts, , drop = FALSE]
-  xCent <- as.numeric(colMeans(x.choose))
-  attr(xCent, "EPts") <- ix.epts
-  if (plot) {
-    n <- nrow(x)
-    p <- ncol(x)
-    xjit <- x + matrix(rnorm(n * p), n, p) %*% diag(0.05 * apply(x, 2, sd), p)
-    xmean <- colMeans(x)
-    x.ept <- x[ix.epts, ]
-    M <- choose(p, 2)
-    xnames <- dimnames(x)[[2]]
-    if (is.null(xnames)) xnames <- paste("x", 1:p, sep = "")
-    par(mfrow = c(ceiling(M/ceiling(sqrt(M))), ceiling(sqrt(M))), mar = c(2, 3, 0, 0) + 0.1)
-    xmax <- apply(x, 2, max)
-    for (i in 1:(p - 1)) {
-      for (j in (i + 1):p) {
-        plot(x[, i], x[, j], col = "gray", cex = 1, ann = FALSE, ty = "n", axes = FALSE, bty = "l")
-        title(xlab = xnames[i], line = 0.3)
-        title(ylab = xnames[j], line = 0.3)
-        ept <- chull(x[, i], x[, j])
-        polygon(x[ept, i], x[ept, j], col = gray(0.9), border = "white")
-        points(xjit[, i], xjit[, j], pch = ".", col = gray(0.6))
-        points(xmean[i], xmean[j], col = gray(0), pch = 17, cex = 1)
-        points(xCent[i], xCent[j], col = gray(0), pch = 1, cex = 2)
-        points(x.ept[, i], x.ept[, j], col = gray(.3), pch = 10, cex = 1.5)
-      }
-    }
-  }
-  return(xCent)
 }
 
 waic <- function(logliks, print = TRUE){
@@ -762,26 +598,6 @@ logmean <- function(lx) return(max(lx) + log(mean(exp(lx - max(lx)))))
 logsum <- function(lx) return(logmean(lx) + log(length(lx)))
 shrinkFn <- function(x) return(1) ##(1/(1 + log(x)))
 trape <- function(x, h, len = length(x)) return(c(0, cumsum(.5 * (x[-1] + x[-len]) * (h[-1] - h[-len]))))
-
-getBands <- function(b, col = 2, lwd = 1, plot = TRUE, add = FALSE, x = seq(0,1,len=nrow(b)), remove.edges = TRUE, ...){
-  colRGB <- col2rgb(col)/255
-  colTrans <- rgb(colRGB[1], colRGB[2], colRGB[3], alpha = 0.2)
-  b.med <- apply(b, 1, quantile, pr = .5)
-  b.lo <- apply(b, 1, quantile, pr = .025)
-  b.hi <- apply(b, 1, quantile, pr = 1 - .025)
-  L <- nrow(b)
-  ss <- 1:L; ss.rev <- L:1
-  if(remove.edges){
-    ss <- 2:(L-1); ss.rev <- (L-1):2
-  }
-  if(plot){
-    if(!add) plot(x[ss], b.med[ss], ty = "n", ylim = range(c(b.lo[ss], b.hi[ss])), ...)
-    polygon(x[c(ss, ss.rev)], c(b.lo[ss], b.hi[ss.rev]), col = colTrans, border = colTrans)
-    lines(x[ss], b.med[ss], col = col, lwd = lwd)
-  }
-  invisible(cbind(b.lo, b.med, b.hi))
-}
-
 
 klGP <- function(lam1, lam2, nknots = 11){
   tau <- seq(0, 1, len = nknots)
