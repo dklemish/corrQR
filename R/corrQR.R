@@ -161,9 +161,11 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   # ncorr = number of correlation parameters for Gaussian copula
   npar <- (nknots+1) * (p+1) + 2
   niter  <- nsamp * thin
-  n.corr <- q*(q-1)/2
+  ncorr <- q*(q-1)/2
 
-  dimpars <- c(n, p, q, L, mid - 1, nknots, ngrid, ncol(a.kap), niter, thin, nsamp, n.corr)
+  tot.par <- q*npar + ncorr
+
+  dimpars <- c(n, p, q, L, mid - 1, nknots, ngrid, ncol(a.kap), niter, thin, nsamp, ncorr)
 
   #### Initialize parameter vector for better MCMC mixing
   # Use qrjoint on individual responses as starting estimate
@@ -192,7 +194,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   #  Copula parameters
   #    q*npar + 1:ncorr = copula parameters
 
-  par <- rep(0, q*npar + n.corr)
+  par <- rep(0, tot.par)
 
   for(j in 1:q){
     suppressWarnings(
@@ -206,9 +208,9 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   # Build list that contains which indices of parameter vector
   # should be updated in each block update in each MCMC iteration
   if(blocking == "single"){
-    blocks <- list(rep(TRUE, npar*q + 1))
+    blocks <- list(rep(TRUE, tot.par))
   } else if(blocking == "by.response"){
-    blocks <- replicate(q*(p + 3) + 1, rep(FALSE, npar*q + 1), simplify = FALSE)
+    blocks <- replicate(q*(p + 3) + 2, rep(FALSE, tot.par), simplify = FALSE)
 
     for(j in 1:q){
       # Parameters for w & gamma functions for one response variable in separate blocks
@@ -221,7 +223,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
       blocks[[q*(p+1) + j]][(j-1)*npar + nknots*(p+1) + 1:(p+1)] <- TRUE
 
       # Parameters for sigma & nu for one response variable & correlation coefficient
-      blocks[[q*(p+2) + j]][c((j-1)*npar + (nknots+1)*(p+1) + 1:2, q*npar+1)] <- TRUE
+      blocks[[q*(p+2) + j]][c((j-1)*npar + (nknots+1)*(p+1) + 1:2, q*npar + 1:n.corr)] <- TRUE
     }
 
     # All parameters
