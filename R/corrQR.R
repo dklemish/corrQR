@@ -211,7 +211,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   if(blocking == "single"){
     blocks <- list(rep(TRUE, tot.par))
   } else if(blocking == "by.response"){
-    blocks <- replicate(q*(p + 3) + 2, rep(FALSE, tot.par), simplify = FALSE)
+    blocks <- replicate(q*(p + 3) + 1, rep(FALSE, tot.par), simplify = FALSE)
 
     for(j in 1:q){
       # Parameters for w & gamma functions for one response variable in separate blocks
@@ -223,14 +223,15 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
       # Parameters for gamma functions for one response variable in separate blocks
       blocks[[q*(p+1) + j]][(j-1)*npar + nknots*(p+1) + 1:(p+1)] <- TRUE
 
-      # Parameters for sigma & nu for one response variable & correlation coefficient
-      blocks[[q*(p+2) + j]][c((j-1)*npar + (nknots+1)*(p+1) + 1:2, q*npar + 1:n.corr)] <- TRUE
+      # Parameters for sigma & nu for one response variable
+      blocks[[q*(p+2) + j]][c((j-1)*npar + (nknots+1)*(p+1) + 1:2)] <- TRUE
     }
 
-    # All parameters
-    blocks[[q*(p+3)+1]][1:(q*npar + 1)] <- TRUE
+    # All parameters except correlation parameters (as these are sampled 
+    # in a different manner)
+    blocks[[q*(p+3)+1]][1:(q*npar)] <- TRUE
   } else if(blocking == "by.function"){
-    blocks <- replicate(p + 4, rep(FALSE, npar*q + 1), simplify = FALSE)
+    blocks <- replicate(p + 4, rep(FALSE, npar*q + ncorr), simplify = FALSE)
 
     # Parameters for w & gamma functions for all response variables
     for(i in 0:p){
@@ -241,15 +242,16 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
     # Parameters for gamma functions for all response variables
     blocks[[p+2]][c(sapply((1:q - 1)*npar, function(x) x + nknots*(p+1) + 1:(p+1)))] <- TRUE
 
-    # Parameters for sigma & nu for all response variables & correlation coefficient
-    blocks[[p+3]][c(sapply((1:q - 1)*npar, function(x) x + (nknots+1)*(p+1) + 1:2),
-                    q*npar + 1)] <- TRUE
+    # Parameters for sigma & nu for all response variables
+    blocks[[p+3]][c(sapply((1:q - 1)*npar, function(x) x + (nknots+1)*(p+1) + 1:2))] <- TRUE
 
-    # All parameters
-    blocks[[p+4]][1:(q*npar + 1)] <- TRUE
+    # All parameters except correlation parameters (as these are sampled 
+    # in a different manner)
+    blocks[[p+4]][1:(q*npar)] <- TRUE
   } else {
-    blocks <- replicate(q*npar+1, rep(FALSE, q*npar + 1), simplify = FALSE)
-    for(i in 1:(q*npar + 1)) blocks[[i]][i] <- TRUE
+    # Sample each paramater separately
+    blocks <- replicate(q*npar, rep(FALSE, q*npar + ncorr), simplify = FALSE)
+    for(i in 1:(q*npar)) blocks[[i]][i] <- TRUE
   }
 
   nblocks <- length(blocks)
@@ -269,33 +271,20 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
 
   if(missing(blocks.S)){
     blocks.S <- lapply(blocks.size, function(q) diag(1, q))
-    # if(substr(blocking, 1, 2) == "by"){
-    #   for(i in 1:(p+1)) blocks.S[[i]][1:nknots, 1:nknots] <- K0
-    #   if(as.numeric(substr(blocking, 4,5)) > 1){
-    #     blocks.S[[p + 2]] <- summary(rq(y ~ x, tau = 0.5), se = "boot", cov = TRUE)$cov
-    #     blocks.S[[p + 3]] <- matrix(c(1, 0, 0, .1), 2, 2)
-    #   }
-    #   if(as.numeric(substr(blocking, 4,5)) == 5){
-    #     slist <- list(); length(slist) <- p + 3
-    #     for(i in 1:(p+1)) slist[[i]] <- K0
-    #     slist[[p+2]] <- summary(rq(y ~ x, tau = 0.5), se = "boot", cov = TRUE)$cov
-    #     slist[[p+3]] <- matrix(c(1, 0, 0, .1), 2, 2)
-    #     blocks.S[[p + 4]] <- as.matrix(bdiag(slist))
-    #   }
-    # }
+
     if(blocking == "by.response"){
       for(i in 1:(q*(p+1))){
         blocks.S[[i]][1:nknots, 1:nknots] <- K0
       }
       for(i in 1:q){
-        blocks.S[[q*(p+1) + i]] <- summary(rq(y[,i] ~ x, tau = 0.5),
-                                           se = "boot",
-                                           cov = TRUE)$cov
+        suppressWarnings(
+          blocks.S[[q*(p+1) + i]] <- summary(rq(y[,i] ~ x, tau = 0.5),
+                                             se = "boot",
+                                             cov = TRUE)$cov
+        )
       }
       for(i in 1:q){
-        blocks.S[[q*(p+2) + i]] <- matrix(c(1,0,0,
-                                            0,0.1,0,
-                                            0,0,0.1), nrow=3, ncol=3)
+        blocks.S[[q*(p+2) + i]] <- matrix(c(1,0,0,0.1), nrow=2, ncol=2)
       }
 
       # Determine prior joint covariance matrix of all blocks
@@ -306,9 +295,10 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
           slist[[(i-1)*(p+3) + j]] <- K0
         }
 
-        slist[[(i-1)*(p+3) + p + 2]] <- summary(rq(y[,i] ~ x, tau = 0.5),
-                                                se = "boot",
-                                                cov = TRUE)$cov
+        slist[[(i-1)*(p+3) + p + 2]] <- 
+          suppressWarnings(
+            summary(rq(y[,i] ~ x, tau = 0.5), se = "boot", cov = TRUE)$cov
+          )
         slist[[i*(p+3)]] <- matrix(c(1,0,0,0.1), nrow=2, ncol=2)
       }
       slist[[q*(p+3) + 1]] <- 0.1
@@ -323,25 +313,29 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
 
         blocks.S[[p+2]][((j-1)*(p+1) + 1):(j*(p+1)),
                         ((j-1)*(p+1) + 1):(j*(p+1))] <-
-          summary(rq(y[,j] ~ x, tau = 0.5), se = "boot", cov = TRUE)$cov
-
+          suppressWarnings(
+            summary(rq(y[,j] ~ x, tau = 0.5), se = "boot", cov = TRUE)$cov
+          )
         blocks.S[[p+3]][(j-1)*2 + 1:2, (j-1)*2 + 1:2] <-
           matrix(c(1,0,0,0.1), nrow=2, ncol=2)
 
       }
-      blocks.S[[p+3]][q*2 + 1, q*2 + 1] <- 0.1
+      blocks.S[[p+3]][q*j, q*j] <- 0.1
 
       # Determine prior joint covariance matrix of all variables
       slist <- list()
       length(slist) <- q*(p+3) + 1
+      
       for(i in 1:q){
         for(j in 1:(p+1)){
           slist[[(i-1)*(p+3) + j]] <- K0
         }
 
-        slist[[(i-1)*(p+3) + p + 2]] <- summary(rq(y[,i] ~ x, tau = 0.5),
-                                                se = "boot",
-                                                cov = TRUE)$cov
+        slist[[(i-1)*(p+3) + p + 2]] <- 
+          suppressWarnings(
+            summary(rq(y[,i] ~ x, tau = 0.5), se = "boot", cov = TRUE)$cov
+          )
+        
         slist[[i*(p+3)]] <- matrix(c(1,0,0,0.1), nrow=2, ncol=2)
       }
       slist[[q*(p+3) + 1]] <- 0.1
@@ -354,30 +348,6 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
 
   imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks))
   dmcmc.par <- c(temp, 0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
-
-  # cat("par = ", par)
-  # #cat("x = ", as.double(x))
-  # #cat("y = ", as.double(y))
-  # cat("copula = ", copulaMethod)
-  # cat("hyper = ", hyperPar)
-  # cat("dim = ", dim)
-  # cat("gridmats = ", gridmats)
-  # cat("tau.g = ", tau.g)
-  # #cat("muV = ", blocks.mu)
-  # #cat("SV = ", blocks.S)
-  # #cat("blocks.size = ", blocks.size)
-  #print(par)
-  cat("length(par) =", length(par), "\n")
-  cat("dim(x) =", dim(x), "\n")
-  cat("dim(y) =", dim(y), "\n")
-  cat("copulaMethod =", copulaMethod, "\n")
-  cat("length(hyperPar) =", length(hyperPar), "\n")
-  #print(dimpars)
-  cat("dim(gridmats) =", dim(gridmats), "\n")
-  #print(tau.g)
-  cat("length(blocks.mu) =", length(blocks.mu), "\n")
-  cat("length(blocks.S) =", length(blocks.S), "\n")
-  print(blocks.size)
 
   tm.c <- system.time(
     oo <- .C("BJQR", par = as.double(par),
