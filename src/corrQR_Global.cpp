@@ -19,7 +19,6 @@ using namespace arma;
 void Init_Prior_Param(int, int, int, int, int, NumericVector, NumericMatrix,
                       NumericVector, NumericVector, IntegerVector, 
                       IntegerVector, IntegerVector, bool);
-bool Stopping_Rule(double, double , double);
 double sigFn(double);
 double sigFn_inv(double);
 double nuFn(double);
@@ -35,41 +34,45 @@ double ppFn0(vec &);
 double ppFn(vec &, int);
 double logsum(vec);
 double logmean(vec);
-void adMCMC(void);
+void   adMCMC(void);
 double dbase_joint_scl(double, vec &);
 double dbasejoint(vec &);
-void trape(double *x, double *h, int length, double *integral);
-/*
-double lpFn(vec &, double temp);
-double lpFn1(vec &);
-double lpFn2(double sigma);
-double logpostFn(vec &, double temp, bool llonly);
-*/
+void   trape(double *x, double *h, int length, double *integral);
 double lpFn(vec, double temp);
 double lpFn1(vec);
 double lpFn2(double sigma);
 double logpostFn(vec, double temp, bool llonly);
-void Adjust_Sigma(double (*f)(double), double &a, double &b, double tolerance);
-void qr_fit_cpp(NumericVector, NumericMatrix, NumericVector, IntegerVector, 
-                int, NumericVector, IntegerVector, NumericMatrix,
-                NumericVector, NumericVector, NumericVector,
-                NumericVector, IntegerVector, IntegerVector, 
-                NumericVector, IntegerVector);
+
+void corr_qr_fit(NumericVector par_,
+                 NumericMatrix x_, 
+                 NumericMatrix y_, 
+                 NumericVector hyper,
+                 IntegerVector dim_,
+                 NumericMatrix gridpars,
+                 NumericVector tauG,
+                 NumericVector muV,
+                 NumericVector SV,
+                 IntegerVector blocks_,
+                 IntegerVector blockSizes_,
+                 NumericVector dmcmcpar,
+                 IntegerVector imcmcpar);
 
 /**** Global variables ****/
 // Data
 mat x;        // covariates (n x p)
-vec y;        // response (n x 1)
+mat y;        // response (n x 1)
 vec taugrid;  // quantiles of interest (L x 1)
 
 // Dimension parameters
-int n;    // # obs
-int p;    // # predictors
-int L;    // # tau's (quantiles) at which betas are estimated
-int mid;  // location in taugrid of median (0.50)
-int m;    // dim of low rank approx to w functions
-int G;    // dim G of approx to pi(lambda)
-int nkap; // # of mixture components for prior on kappa_j
+int n;     // # obs
+int p;     // # predictors
+int q;     // # response variables
+int L;     // # tau's (quantiles) at which betas are estimated
+int mid;   // location in taugrid closest to median (0.50)
+int m;     // dim of low rank approx to w functions
+int G;     // dim G of approx to pi(lambda)
+int nkap;  // # of mixture components for prior on kappa_j
+int ncorr; // # of correlation parameters for Gaussian copula
 
 // MCMC parameters
 int niter;    // MCMC iterations
@@ -98,12 +101,8 @@ std::vector<mat> S;  // initial MH block covariances
 std::vector<uvec> blocks;
 
 ivec blockSizes;
-ivec cens;
-bool shrink;
 
 // Hyperparameters
-double asig;
-double bsig; // hyperparms for sigma
 vec akap;
 vec bkap;
 vec lpkap;   // hyperparms for kappa
@@ -149,123 +148,103 @@ mat acceptSample; // stored MH acceptance history
 mat parStore;     // stored posterior draws npar x nsamp
 
 // [[Rcpp::export]] 
-void qr_fit_cpp(NumericVector par_,
-                NumericMatrix x_, 
-                NumericVector y_, 
-                IntegerVector cens_, 
-                int shrink_,
-                NumericVector hyper,
-                IntegerVector dim_,
-                NumericMatrix gridpars,
-                NumericVector tauG,
-                NumericVector siglim,
-                NumericVector muV,
-                NumericVector SV,
-                IntegerVector blocks_,
-                IntegerVector blockSizes_,
-                NumericVector dmcmcpar,
-                IntegerVector imcmcpar){
+SEXP corr_qr_fit(NumericVector par_,
+                 NumericMatrix x_, 
+                 NumericMatrix y_, 
+                 NumericVector hyper,
+                 IntegerVector dim_,
+                 NumericMatrix gridpars,
+                 NumericVector tauG,
+                 NumericVector muV,
+                 NumericVector SV,
+                 IntegerVector blocks_,
+                 IntegerVector blockSizes_,
+                 NumericVector dmcmcpar,
+                 IntegerVector imcmcpar,
+                 NumericVector parsamp,
+                 NumericVector acptsamp,
+                 NumericVector lpsamp){
   /***** Initialization *****/
   // Input data
-  x = mat(x_.begin(), x_.nrow(), x_.ncol(), TRUE);
-  y = vec(y_.begin(), y_.size(), TRUE);
+  x       = mat(x_.begin(), x_.nrow(), x_.ncol(), TRUE);
+  y       = vec(y_.begin(), y_.size(), TRUE);
   taugrid = vec(tauG.begin(), tauG.size(), TRUE);
   
   // Dimensions
-  n = dim_[0];
-  p = dim_[1];
-  L = dim_[2];
-  mid = dim_[3];
-  m = dim_[4];
-  G = dim_[5];
-  nkap = dim_[6];
+  n    = dim_[0];
+  p    = dim_[1];
+  q    = dim_[2];
+  L    = dim_[3];
+  mid  = dim_[4];
+  m    = dim_[5];
+  G    = dim_[6];
+  nkap = dim_[7];
   
   // MCMC parameters
-  niter = dim_[7];
-  thin = dim_[8];
-  nsamp = dim_[9];
+  niter = dim_[8];
+  thin  = dim_[9];
+  nsamp = dim_[10];
   npar = (m+1) * (p+1) + 2;
   nblocks = imcmcpar[0];
   refresh = imcmcpar[1];
   verbose = (bool) imcmcpar[2];
-  ticker = imcmcpar[3];
-  temp = dmcmcpar[0];
-  decay = dmcmcpar[1];
+  ticker  = imcmcpar[3];
+  temp    = dmcmcpar[0];
+  decay   = dmcmcpar[1];
   
   refresh_counter = ivec(imcmcpar.begin() + 4, nblocks, TRUE);
-  acpt_target = vec(dmcmcpar.begin() + 2, nblocks, TRUE);
-  lm = vec(dmcmcpar.begin() + 2 + nblocks, nblocks, TRUE);
+  acpt_target     =  vec(dmcmcpar.begin() + 2, nblocks, TRUE);
+  lm              =  vec(dmcmcpar.begin() + 2 + nblocks, nblocks, TRUE);
   
   // Prior parameters
   Init_Prior_Param(L, m, G, nblocks, nkap, hyper, gridpars, muV, SV, 
                    blocks_, blockSizes_, cens_, (bool)shrink_);
   
-  // Hyperparameters
-  double a_siglim = siglim[0];
-  double b_siglim = siglim[1];  
-  
   // Parameters
-  gam0 = 0;
-  sigma = 1;
-  nu = 1;
-  gam = vec(p);
-  w0  = vec(L);
-  zeta0 = vec(L);
+  gam0     = 0;
+  sigma    = 1;
+  nu       = 1;
+  gam      = vec(p);
+  w0       = vec(L);
+  zeta0    = vec(L);
   zeta0dot = vec(L);
-  wMat = mat(p, L);
-  vMat = mat(p, L);
+  wMat     = mat(p, L);
+  vMat     = mat(p, L);
   
   // Intermediate calculations
-  wgrid = mat(L, G, fill::zeros);
-  a = mat(n, L, fill::zeros);
-  aTilde = mat(n, L, fill::zeros);
-  vTilde = mat(p, L, fill::zeros);
-  b0dot = vec(L, fill::zeros);
-  bdot = mat(p, L, fill::zeros);
-  bPos = mat(p, mid+1, fill::zeros);
-  bNeg = mat(p, mid+1, fill::zeros);
-  vNormSq = vec(L, fill::zeros);
-  zknot = vec(m, fill::zeros);
-  Q0vec = vec(n, fill::zeros);
-  resLin = vec(n,fill::zeros);
-  llvec = vec(n, fill::zeros);
-  llgrid = vec(G, fill::zeros);
+  wgrid    = mat(L, G, fill::zeros);
+  a        = mat(n, L, fill::zeros);
+  aTilde   = mat(n, L, fill::zeros);
+  vTilde   = mat(p, L, fill::zeros);
+  b0dot    = vec(L, fill::zeros);
+  bdot     = mat(p, L, fill::zeros);
+  bPos     = mat(p, mid+1, fill::zeros);
+  bNeg     = mat(p, mid+1, fill::zeros);
+  vNormSq  = vec(L, fill::zeros);
+  zknot    = vec(m, fill::zeros);
+  Q0vec    = vec(n, fill::zeros);
+  resLin   = vec(n,fill::zeros);
+  llvec    = vec(n, fill::zeros);
+  llgrid   = vec(G, fill::zeros);
   
-  pgvec = mat(G, p+1, fill::zeros);
-  lb = vec(10, fill::zeros);
-  lw = vec(nkap, fill::zeros);
+  pgvec    = mat(G, p+1, fill::zeros);
+  lb       = vec(10, fill::zeros);
+  lw       = vec(nkap, fill::zeros);
   
   par0      = vec(par_.begin(), par_.size(), TRUE);
   parSample = vec(par_.begin(), par_.size(), TRUE);
-  
-  // Options
-  // const double shrinkFactor = 1; 
   
   // Output
   lpSample     = vec(nsamp, fill::zeros);           // stored log-likelihood
   acceptSample = mat(nsamp, nblocks, fill::zeros);  // stored MH acceptance history
   parStore     = mat(npar, nsamp, fill::zeros);     // stored posterior draws npar x nsamp
   
-  //shrinkFactor = shrinkFn((double)p);
-  // Adjust starting value of sigma
-
-   //Rcout << "sigma before adjust: " << parSample[(m+1)*(p+1)] << std::endl;
-   //parSample.t().print("parSample before adjust:");
-   Adjust_Sigma(lpFn2, a_siglim, b_siglim, 1.0e-5);
-   
-   parSample[(m+1)*(p+1)] = (a_siglim + b_siglim)/2;
-   
-   //Rcout << "sigma after adjust: " << parSample[(m+1)*(p+1)] << std::endl;
-   //parSample.t().print("parSample after adjust:");
-   
-   adMCMC();
-   //parSample.t().print("last Sample");
+  adMCMC();
 }
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
                       NumericMatrix gridpars, NumericVector muV, NumericVector SV,
-                      IntegerVector blocks_, IntegerVector bSize, IntegerVector cen,
-                      bool shrink_){
+                      IntegerVector blocks_, IntegerVector bSize){
   
   int reach, i, l, k, b, mu_point, S_point, block_point;
   
@@ -274,8 +253,8 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   ldRgrid = vec(G);
   lpgrid  = vec(G);
   
-  std::vector<vec> mu_init(nblocks);
-  std::vector<mat> S_init(nblocks);
+  std::vector<vec>  mu_init(nblocks);
+  std::vector<mat>  S_init(nblocks);
   std::vector<uvec> blocks_init(nblocks);
   
   mu = mu_init;
@@ -283,11 +262,7 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   blocks = blocks_init;
   
   blockSizes = ivec(bSize.begin(), bSize.size(), TRUE);
-  cens = ivec(cen.begin(), cen.size(), TRUE);
-  
-  asig = hyp[0];
-  bsig = hyp[1];    // hyperparms for sigma
-  
+
   akap  = vec(nkap);
   bkap  = vec(nkap);
   lpkap = vec(nkap);
@@ -324,54 +299,6 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
     blocks[b] = arma::conv_to<uvec>::from(ivec(blocks_.begin()+block_point, blockSizes[b], TRUE));
     block_point += blockSizes[b];
   }  
-  
-  shrink = shrink_;
-  
-  return;
-}
-
-bool Stopping_Rule(double x0, double x1, double tolerance){
-  double xm = 0.5 * fabs( x1 + x0 );
-  
-  if ( xm <= 1.0 ) return ( fabs( x1 - x0 ) < tolerance ) ? TRUE : FALSE;
-  return ( fabs( x1 - x0 ) < tolerance * xm ) ? TRUE : FALSE;
-}
-
-void Adjust_Sigma(double (*f)(double), double &a, double &b, double tolerance){
-  // Replaces combination of Max_Search_Golden_Section & lpFn2
-  const double lam = 0.5 * (sqrt5 - 1.0);
-  const double mu = 0.5 * (3.0 - sqrt5);     // = 1 - lam
-  
-  Rcout << "Siglim[0] = " << a << std::endl;
-  Rcout << "Siglim[1] = " << b << std::endl;
-  
-  if (tolerance <= 0.0) tolerance = 1.0e-5 * (b - a);
-  
-  double x1  = b - lam * (b - a);
-  double x2  = a + lam * (b - a);
-  double fx1 = f(x1);
-  double fx2 = f(x2);
-  
-  while ( ! Stopping_Rule( a, b, tolerance) ) {
-    if (fx1 < fx2) {
-      a = x1;
-      //fa = fx1;
-      if ( Stopping_Rule( a, b, tolerance) ) break;
-      x1 = x2;
-      fx1 = fx2;
-      x2 = b - mu * (b - a);
-      fx2 = f(x2);
-    } else {
-      b = x2;
-      //fb = fx2;
-      if ( Stopping_Rule( a, b, tolerance) ) break;
-      x2 = x1;
-      fx2 = fx1;
-      x1 = a + mu * (b - a);
-      fx1 = f(x1);
-    }
-  }
-  Rcout << "a = " << a << "; b = " << b << std::endl;
   
   return;
 }

@@ -5,7 +5,6 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
                    hyper = list(sig = c(.1,.1),
                                 lam = c(6,4),
                                 kap = c(0.1,0.1,1)),
-                   shrink = FALSE,
                    prox.range = c(.2,.95),
                    acpt.target = 0.15,
                    ref.size = 3,
@@ -349,33 +348,41 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks))
   dmcmc.par <- c(temp, 0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
 
-  tm.c <- system.time(
-    oo <- .C("BJQR", par = as.double(par),
-             x = as.double(x), y = as.double(y),
-             copula = as.integer(copulaMethod),
-             shrink = as.integer(shrink), hyper = as.double(hyperPar),
-             dim = as.integer(dimpars), gridmats = as.double(gridmats),
-             tau.g = as.double(tau.g),
-             siglim = as.double(sigFn.inv(c(1.0 * infl * sigma, 10.0 * infl * sigma), a.sig)),
-             muV = as.double(blocks.mu), SV = as.double(blocks.S),
-             blocks = as.integer(blocks.ix), blocks.size = as.integer(blocks.size),
-             dmcmcpar = as.double(dmcmc.par), imcmcpar = as.integer(imcmc.par),
-             parsamp = double(nsamp * length(par)),
-             acptsamp = double(nsamp * nblocks), lpsamp = double(nsamp))
-  )
-  cat("elapsed time:", round(tm.c[3]), "seconds\n")
-
-  oo$x <- x
-  oo$y <- y
-  oo$xnames <- x.names
-  oo$ynames <- y.names
-  oo$gridmats <- gridmats
-  oo$prox <- prox.grid
-  oo$reg.ix <- reg.ix
-  oo$runtime <- tm.c[3]
-
-  class(oo) <- "qrjoint"
-  return(oo)
+  .Call('corr_qr_fit', PACKAGE='corrQR', 
+        )
+  
+  # tm.c <- system.time(
+  #   oo <- .C("BJQR", 
+  #            par      = as.double(par),
+  #            x        = as.double(x), 
+  #            y        = as.double(y),
+  #            hyper    = as.double(hyperPar),
+  #            dim      = as.integer(dimpars), 
+  #            gridmats = as.double(gridmats),
+  #            tau.g    = as.double(tau.g),
+  #            muV      = as.double(blocks.mu), 
+  #            SV       = as.double(blocks.S),
+  #            blocks   = as.integer(blocks.ix), 
+  #            blocks.size = as.integer(blocks.size),
+  #            dmcmcpar = as.double(dmcmc.par), 
+  #            imcmcpar = as.integer(imcmc.par),
+  #            parsamp  = double(nsamp * length(par)),
+  #            acptsamp = double(nsamp * nblocks), 
+  #            lpsamp   = double(nsamp))
+  # )
+  # cat("elapsed time:", round(tm.c[3]), "seconds\n")
+  # 
+  # oo$x <- x
+  # oo$y <- y
+  # oo$xnames <- x.names
+  # oo$ynames <- y.names
+  # oo$gridmats <- gridmats
+  # oo$prox <- prox.grid
+  # oo$reg.ix <- reg.ix
+  # oo$runtime <- tm.c[3]
+  # 
+  # class(oo) <- "qrjoint"
+  # return(oo)
 }
 
 waic <- function(logliks, print = TRUE){
