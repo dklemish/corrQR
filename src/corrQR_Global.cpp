@@ -16,9 +16,6 @@ using namespace Rcpp;
 using namespace arma;
 
 /***** Function headers *****/
-void Init_Prior_Param(int, int, int, int, int, NumericVector, NumericMatrix,
-                      NumericVector, NumericVector, IntegerVector,
-                      IntegerVector, IntegerVector, bool);
 double sigFn(double);
 double sigFn_inv(double);
 double nuFn(double);
@@ -56,6 +53,10 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP blockSizes_,
                  SEXP dmcmcpar,
                  SEXP imcmcpar);
+
+void Init_Prior_Param(int, int, int, int, int, NumericVector, NumericMatrix,
+                      NumericVector, NumericVector, IntegerVector,
+                      IntegerVector);
 
 /**** Global variables ****/
 // Data
@@ -139,7 +140,6 @@ mat pgvec;    // contains p_g(W_j*) (G x (p+1))
 vec lb;       // used for shrinkage prior on gamma vector (10 x 1)
 vec lw;       // used for interpolation of marginal GP (nkap x 1)
 
-vec par0;      // used in initial adjustment of sigma
 vec parSample; // current parameter draw
 
 // Outputs
@@ -204,25 +204,24 @@ SEXP corr_qr_fit(SEXP par_,
   temp    = DMCMCPAR[0];
   decay   = DMCMCPAR[1];
 
-  //refresh_counter = ivec(IMCMCPAR.begin() + 4, nblocks, TRUE);
-  //acpt_target     =  vec(DMCMCPAR.begin() + 2, nblocks, TRUE);
-  //lm              =  vec(DMCMCPAR.begin() + 2 + nblocks, nblocks, TRUE);
+  refresh_counter = ivec(IMCMCPAR.begin() + 4, nblocks, TRUE);
+  acpt_target     =  vec(DMCMCPAR.begin() + 2, nblocks, TRUE);
+  lm              =  vec(DMCMCPAR.begin() + 2 + nblocks, nblocks, TRUE);
 
-  /*
   // Prior parameters
-  Init_Prior_Param(L, m, G, nblocks, nkap, hyper, gridpars, muV, SV,
-                   blocks_, blockSizes_, cens_, (bool)shrink_);
+  Init_Prior_Param(L, m, G, nblocks, nkap, HYP, GRIDM, MU_V, SV,
+                   BLOCKS, BLOCKS_SIZE);
 
   // Parameters
   gam0     = 0;
   sigma    = 1;
   nu       = 1;
-  gam      = vec(p);
-  w0       = vec(L);
-  zeta0    = vec(L);
-  zeta0dot = vec(L);
-  wMat     = mat(p, L);
-  vMat     = mat(p, L);
+  gam      = vec(p, fill::zeros);
+  w0       = vec(L, fill::zeros);
+  zeta0    = vec(L, fill::zeros);
+  zeta0dot = vec(L, fill::zeros);
+  wMat     = mat(p, L, fill::zeros);
+  vMat     = mat(p, L, fill::zeros);
 
   // Intermediate calculations
   wgrid    = mat(L, G, fill::zeros);
@@ -244,26 +243,26 @@ SEXP corr_qr_fit(SEXP par_,
   lb       = vec(10, fill::zeros);
   lw       = vec(nkap, fill::zeros);
 
-  par0      = vec(par_.begin(), par_.size(), TRUE);
-  parSample = vec(par_.begin(), par_.size(), TRUE);
+  parSample = vec(PAR.begin(), PAR.size(), TRUE);
 
   // Output
   lpSample     = vec(nsamp, fill::zeros);           // stored log-likelihood
   acceptSample = mat(nsamp, nblocks, fill::zeros);  // stored MH acceptance history
   parStore     = mat(npar, nsamp, fill::zeros);     // stored posterior draws npar x nsamp
 
-  adMCMC();
-   */
-  x.print("x = ");
-  y.print("y = ");
-  Rcout << "n = " << n << std::endl;
+  //adMCMC();
+
+  for(int i =0; i < nblocks; i++){
+    S[i].print();
+  }
+
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
                             Rcpp::Named("n") = n,
                             Rcpp::Named("PAR") = PAR);
 }
-/*
+
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
                       NumericMatrix gridpars, NumericVector muV, NumericVector SV,
                       IntegerVector blocks_, IntegerVector bSize){
@@ -307,7 +306,7 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
         Rgrid(l,k,i) = gridpars[reach++];
 
     ldRgrid[i] = gridpars[reach++];
-    lpgrid[i] = gridpars[reach++];
+    lpgrid[i]  = gridpars[reach++];
   }
 
   // Initialize user provided block means, covariances
@@ -324,7 +323,7 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
 
   return;
 }
-
+/*
 double ppFn0(vec &par){
   // Calculate interpolated w0 function at all quantiles based on values of
   // function at m knots
