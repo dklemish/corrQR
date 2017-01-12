@@ -43,19 +43,19 @@ double lpFn1(vec);
 double lpFn2(double sigma);
 double logpostFn(vec, double temp, bool llonly);
 
-SEXP corr_qr_fit(SEXP par_,
-                 SEXP x_,
-                 SEXP y_,
-                 SEXP hyper,
-                 SEXP dim_,
-                 SEXP gridpars,
-                 SEXP tauG,
-                 SEXP muV,
-                 SEXP SV_,
-                 SEXP blocks_,
-                 SEXP blockSizes_,
-                 SEXP dmcmcpar,
-                 SEXP imcmcpar);
+void corr_qr_fit(NumericVector par_,
+                 NumericMatrix x_,
+                 NumericMatrix y_,
+                 NumericVector hyper,
+                 IntegerVector dim_,
+                 NumericMatrix gridpars,
+                 NumericVector tauG,
+                 NumericVector muV,
+                 NumericVector SV,
+                 IntegerVector blocks_,
+                 IntegerVector blockSizes_,
+                 NumericVector dmcmcpar,
+                 IntegerVector imcmcpar);
 
 /**** Global variables ****/
 // Data
@@ -86,8 +86,8 @@ int ticker;   // how often to update screen
 double temp;
 double decay;
 ivec refresh_counter; //
-vec acpt_target;      //
-vec lm;               //
+vec acpt_target;    //
+vec lm;             //
 
 // Prior parameters
 cube Agrid;   // storage for A_g = C_0*(g) C**^{-1}(g) (L x m x G)
@@ -148,67 +148,54 @@ mat acceptSample; // stored MH acceptance history
 mat parStore;     // stored posterior draws npar x nsamp
 
 // [[Rcpp::export]]
-SEXP corr_qr_fit(SEXP par_,
-                 SEXP x_,
-                 SEXP y_,
-                 SEXP hyper,
-                 SEXP dim_,
-                 SEXP gridpars,
-                 SEXP tauG,
-                 SEXP muV,
-                 SEXP SV_,
-                 SEXP blocks_,
-                 SEXP blockSizes_,
-                 SEXP dmcmcpar,
-                 SEXP imcmcpar){
+SEXP corr_qr_fit(NumericVector par_,
+                 NumericMatrix x_,
+                 NumericMatrix y_,
+                 NumericVector hyper,
+                 IntegerVector dim_,
+                 NumericMatrix gridpars,
+                 NumericVector tauG,
+                 NumericVector muV,
+                 NumericVector SV,
+                 IntegerVector blocks_,
+                 IntegerVector blockSizes_,
+                 NumericVector dmcmcpar,
+                 IntegerVector imcmcpar,
+                 NumericVector parsamp,
+                 NumericVector acptsamp,
+                 NumericVector lpsamp){
   /***** Initialization *****/
   // Input data
-  // Convert SEXP objects to Rcpp objects
-  NumericVector PAR    = as<NumericVector>(par_);
-  NumericMatrix X      = as<NumericMatrix>(x_);
-  NumericMatrix Y      = as<NumericMatrix>(y_);
-  NumericVector HYP    = as<NumericVector>(hyper);
-  IntegerVector DIM    = as<IntegerVector>(dim_);
-  NumericMatrix GRIDM  = as<NumericMatrix>(gridpars);
-  NumericVector TAU_G  = as<NumericVector>(tauG);
-  NumericVector MU_V   = as<NumericVector>(muV);
-  NumericVector SV     = as<NumericVector>(muV);
-  IntegerVector BLOCKS = as<IntegerVector>(blocks_);
-  IntegerVector BLOCKS_SIZE = as<IntegerVector>(blockSizes_);
-  NumericVector DMCMCPAR = as<NumericVector>(dmcmcpar);
-  IntegerVector IMCMCPAR = as<IntegerVector>(imcmcpar);
-
-  x       = mat(X.begin(), X.nrow(), X.ncol(), TRUE);
-  y       = mat(Y.begin(), Y.nrow(), Y.ncol(), TRUE);
-  taugrid = vec(TAU_G.begin(), TAU_G.size(), TRUE);
+  x       = mat(x_.begin(), x_.nrow(), x_.ncol(), TRUE);
+  y       = vec(y_.begin(), y_.size(), TRUE);
+  taugrid = vec(tauG.begin(), tauG.size(), TRUE);
 
   // Dimensions
-  n    = DIM[0];
-  p    = DIM[1];
-  q    = DIM[2];
-  L    = DIM[3];
-  mid  = DIM[4];
-  m    = DIM[5];
-  G    = DIM[6];
-  nkap = DIM[7];
+  n    = dim_[0];
+  p    = dim_[1];
+  q    = dim_[2];
+  L    = dim_[3];
+  mid  = dim_[4];
+  m    = dim_[5];
+  G    = dim_[6];
+  nkap = dim_[7];
 
   // MCMC parameters
-  niter = DIM[8];
-  thin  = DIM[9];
-  nsamp = DIM[10];
+  niter = dim_[8];
+  thin  = dim_[9];
+  nsamp = dim_[10];
   npar = (m+1) * (p+1) + 2;
-  nblocks = IMCMCPAR[0];
-  refresh = IMCMCPAR[1];
-  verbose = (bool) IMCMCPAR[2];
-  ticker  = IMCMCPAR[3];
-  temp    = DMCMCPAR[0];
-  decay   = DMCMCPAR[1];
+  nblocks = imcmcpar[0];
+  refresh = imcmcpar[1];
+  verbose = (bool) imcmcpar[2];
+  ticker  = imcmcpar[3];
+  temp    = dmcmcpar[0];
+  decay   = dmcmcpar[1];
 
-  //refresh_counter = ivec(IMCMCPAR.begin() + 4, nblocks, TRUE);
-  //acpt_target     =  vec(DMCMCPAR.begin() + 2, nblocks, TRUE);
-  //lm              =  vec(DMCMCPAR.begin() + 2 + nblocks, nblocks, TRUE);
+  refresh_counter = ivec(imcmcpar.begin() + 4, nblocks, TRUE);
+  acpt_target     =  vec(dmcmcpar.begin() + 2, nblocks, TRUE);
+  lm              =  vec(dmcmcpar.begin() + 2 + nblocks, nblocks, TRUE);
 
-  /*
   // Prior parameters
   Init_Prior_Param(L, m, G, nblocks, nkap, hyper, gridpars, muV, SV,
                    blocks_, blockSizes_, cens_, (bool)shrink_);
@@ -253,17 +240,8 @@ SEXP corr_qr_fit(SEXP par_,
   parStore     = mat(npar, nsamp, fill::zeros);     // stored posterior draws npar x nsamp
 
   adMCMC();
-   */
-  x.print("x = ");
-  y.print("y = ");
-  Rcout << "n = " << n << std::endl;
-
-  return Rcpp::List::create(Rcpp::Named("X") = x,
-                            Rcpp::Named("Y") = y,
-                            Rcpp::Named("n") = n,
-                            Rcpp::Named("PAR") = PAR);
 }
-/*
+
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
                       NumericMatrix gridpars, NumericVector muV, NumericVector SV,
                       IntegerVector blocks_, IntegerVector bSize){
@@ -470,7 +448,7 @@ double logpostFn(vec par, double temp, bool llonly){
 
     // Approximate v = w(zeta(tau))
     // Linearly interpolate value of w function at tau's transformed by zeta
-
+    /*
     for(j = 0; j < p; j++){
       for(l = 1; l < L-1; l++){
         //Rcout << "12a: "; arma::find(zeta0[l] >= taugrid, 1, "last").t().print();
@@ -493,7 +471,7 @@ double logpostFn(vec par, double temp, bool llonly){
       vMat.at(L-1,j) = wMat.at(L-1,j);
     }
     //vMat.print("vMat");
-
+    */
     vMat = wMat;
 
     // Compute ||v_l||^2
@@ -877,9 +855,9 @@ void adMCMC(void){
       alpha_run[b] = ((double)run_counter[b] * alpha_run[b] + alpha[b]) / ((double)run_counter[b] + 1.0);
       run_counter[b]++;
 
-
+      */
     }
-
+    /*
     // Store results at appropriate iterations
     if((iter+1) % thin == 0){
       lpSample[store_lp++] = lpval;
@@ -930,6 +908,170 @@ void adMCMC(void){
         chunk_size[b] = 0;
       }
     }
+    */
   }
 }
-*/
+
+
+/*
+ // [[Rcpp::export]]
+ NumericVector ppFn0_Cpp(NumericVector wknot_,
+ NumericVector gridpars,
+ int L,
+ int nknots,
+ int G){
+
+ int i;
+ double zss, lps;
+
+ arma::mat wgrid(L, G);
+
+ arma::colvec zknot;
+ arma::colvec wknot(wknot_.begin(), wknot_.size(), FALSE);
+
+ arma::Cube<double> Agrid(L, nknots, G);
+ arma::Cube<double> Rgrid(nknots, nknots, G);
+
+ arma::colvec pgvec(G);
+ arma::colvec llgrid(G);
+ arma::colvec ldRgrid(G);
+ arma::colvec lpgrid(G);
+
+ int reach = 0;
+
+ for(int i = 0; i < G; i++){
+ for(int l = 0; l < L; l++)
+ for(int k = 0; k < nknots; k++)
+ Agrid(l,k,i) = gridpars[reach++];
+
+ for(int k = 0; k < nknots; k++)
+ for(int l = 0; l < nknots; l++)
+ Rgrid(l,k,i) = gridpars[reach++];
+
+ ldRgrid[i] = gridpars[reach++];
+ lpgrid[i] = gridpars[reach++];
+ }
+
+ //par[1:m] contains w0 values at knots
+ //arma::Col<double> wknot = par.subvec(0,m-1);
+
+ for(i = 0; i < G; i++){
+ wgrid.col(i) = Agrid.slice(i) * wknot;
+
+ //Rgrid.slice(i).print();
+ zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+ // zss = w_*j^T * C_**^-1 * W_j*
+ zss = arma::as_scalar(zknot.t() * zknot);
+
+ // Calculate p(W_{j*}|lambda_g)
+ // llgrid = part of multivariate t-distribution
+ // ldRgrid = log-determinant of C_** ^ -0.5
+ // lpgrid = log prior of0.1 + 0.5 * (double)m
+
+ llgrid[i] = -(1.5 + 0.5 * (double)nknots) * log1p(0.5 * zss / 1.5);
+ }
+ pgvec = llgrid - ldRgrid + lpgrid;
+ lps = logsum_Cpp(wrap(pgvec));
+
+ for(i = 0; i < G; i++)
+ pgvec.at(i) = exp(pgvec.at(i) - lps);
+
+ arma::colvec w0 = wgrid * pgvec;
+
+ return wrap(w0);
+ }
+ */
+/*
+ // [[Rcpp::export]]
+ void qrJointClassTest(NumericVector par_,
+ NumericMatrix x_,
+ NumericVector y_,
+ IntegerVector cens_,
+ int shrink_,
+ NumericVector hyper_,
+ IntegerVector dimpars_,
+ NumericMatrix gridmats_,
+ NumericVector tauG_,
+ NumericVector siglim_,
+ NumericVector muV_,
+ NumericVector SV_,
+ IntegerVector blocks_,
+ IntegerVector blockSizes_,
+ NumericVector dmcmcpar,
+ IntegerVector imcmcpar){
+ qrJoint Q(par_, x_, y_, cens_, shrink_, hyper_, dimpars_, gridmats_, tauG_, siglim_,
+ muV_, SV_, blocks_, blockSizes_, dmcmcpar, imcmcpar);
+
+ Rcout << "Constructor finished!" << std::endl;
+
+ Q.adMCMC();
+
+ //return wrap(Q.parStore.t());
+ return;
+ }
+
+ // [[Rcpp::export]]
+ void qrLikelihoodTest(NumericVector par_,
+ NumericMatrix x_,
+ NumericVector y_,
+ IntegerVector cens_,
+ int shrink_,
+ NumericVector hyper_,
+ IntegerVector dimpars_,
+ NumericMatrix gridmats_,
+ NumericVector tauG_,
+ NumericVector siglim_,
+ NumericVector muV_,
+ NumericVector SV_,
+ IntegerVector blocks_,
+ IntegerVector blockSizes_,
+ NumericVector dmcmcpar,
+ IntegerVector imcmcpar){
+
+ qrJoint Q(par_, x_, y_, cens_, shrink_, hyper_, dimpars_, gridmats_, tauG_, siglim_,
+ muV_, SV_, blocks_, blockSizes_, dmcmcpar, imcmcpar);
+
+ Rcout << "Constructor finished!" << std::endl;
+
+ // Tau grid
+ Q.taugrid.t().print("Grid of tau's"); Rcout << std::endl;
+
+ // GP interpolation
+ //Q.ppFn0();
+ Q.parSample.subvec(0, Q.m - 1).t().print("W0 at knots"); Rcout << std::endl;
+ Q.w0.t().print("W0 approximation"); Rcout << std::endl;
+ Rcout << std::endl;
+
+ //Q.ppFn(1);
+ Q.parSample.subvec(Q.m, 2*Q.m - 1).t().print("W at knots"); Rcout << std::endl;
+ Q.wMat.print("W approximation"); Rcout << std::endl;
+ Rcout << std::endl;
+
+ // Calculate zeta, zeta.dot
+ double w0max = Q.w0.max(); // Armadillo max function
+ arma::vec zeta0dot = arma::exp(Q.shrinkFactor * (Q.w0-w0max));
+ arma::vec zeta0    = Q.trape(zeta0dot, Q.taugrid);
+
+ // zeta0[0] = 0, zeta0[1] = 1 by definition
+ // rescale zeta0 so that it lies in [0,1] for tau != 0, 1
+ double L = Q.L;
+ double zeta0tot = zeta0[L-2];
+
+ zeta0[0] = 0.0; zeta0[L-1] = 1.0;
+ zeta0.subvec(1,L-2) = Q.taugrid[1] + (Q.taugrid[L-2] - Q.taugrid[1]) * zeta0.subvec(1,L-2) / zeta0tot;
+
+ zeta0dot[0] = 0.0; zeta0dot[L-1] = 0.0;
+ zeta0dot.subvec(1,L-2) = (Q.taugrid[L-2] - Q.taugrid[1]) * zeta0dot.subvec(1,L-2) / zeta0tot;
+
+ zeta0.t().print("Zeta"); Rcout << std::endl;
+ zeta0dot.t().print("Zeta dot"); Rcout << std::endl;
+ Rcout << std::endl;
+
+ // Output v matrix = w(zeta(tau))
+ Rcout << "vMat is " << Q.vMat.n_rows << " by " << Q.vMat.n_cols << std::endl << std::endl;
+ Q.vMat.print("vMat"); Rcout << std::endl;
+ Q.vNormSq.t().print("vNormSq"); Rcout << std::endl;
+
+ return;
+ }
+ */

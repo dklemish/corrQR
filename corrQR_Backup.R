@@ -200,7 +200,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
     suppressWarnings(
       invis <- capture.output(
         par[(j-1)*npar + 1:npar] <-
-          qrjoint(x, y[,j], nsamp = 100, thin=1)$par
+          qrjoint(x, y[,j], nsamp = 100, thin=5)$par
       )
     )
   }
@@ -348,10 +348,8 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks))
   dmcmc.par <- c(temp, 0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
 
-  .Call('corrQR_corr_qr_fit', PACKAGE='corrQR',
-        par, x, y, hyperPar, dimpars, gridmats, tau.g,
-        blocks.mu, blocks.S,
-        blocks.ix, blocks.size, dmcmc.par, imcmc.par)
+  .Call('corr_qr_fit', PACKAGE='corrQR',
+        )
 
   # tm.c <- system.time(
   #   oo <- .C("BJQR",

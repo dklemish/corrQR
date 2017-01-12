@@ -9,5 +9,6 @@ Description: More about what it does (maybe more than one line)
 License: What license is it under?
 Encoding: UTF-8
 LazyData: true
+LazyLoad: yes
 LinkingTo: Rcpp, RcppArmadillo
-Imports: Rcpp(>= 0.12.5), RcppArmadillo, qrjoint
+Imports: Rcpp(>= 0.12.5), RcppArmadillo, qrjoint, coda
