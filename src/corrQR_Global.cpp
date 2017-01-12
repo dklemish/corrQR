@@ -45,18 +45,18 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP y_,
                  SEXP hyper,
                  SEXP dim_,
-                 SEXP gridpars,
-                 SEXP tauG,
-                 SEXP muV,
+                 SEXP gridpars_,
+                 SEXP tauG_,
+                 SEXP muV_,
                  SEXP SV_,
                  SEXP blocks_,
                  SEXP blockSizes_,
-                 SEXP dmcmcpar,
-                 SEXP imcmcpar);
+                 SEXP dmcmcpar_,
+                 SEXP imcmcpar_);
 
-void Init_Prior_Param(int, int, int, int, int, NumericVector, NumericMatrix,
-                      NumericVector, NumericVector, IntegerVector,
-                      IntegerVector);
+void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
+                      NumericMatrix gridpars, List muV, List SV,
+                      IntegerVector blocks_, IntegerVector bSize);
 
 /**** Global variables ****/
 // Data
@@ -155,7 +155,7 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP dim_,
                  SEXP gridpars,
                  SEXP tauG,
-                 SEXP muV,
+                 SEXP muV_,
                  SEXP SV_,
                  SEXP blocks_,
                  SEXP blockSizes_,
@@ -167,16 +167,16 @@ SEXP corr_qr_fit(SEXP par_,
   NumericVector PAR    = as<NumericVector>(par_);
   NumericMatrix X      = as<NumericMatrix>(x_);
   NumericMatrix Y      = as<NumericMatrix>(y_);
-  NumericVector HYP    = as<NumericVector>(hyper);
+  NumericVector HYP    = as<NumericVector>(hyper_);
   IntegerVector DIM    = as<IntegerVector>(dim_);
-  NumericMatrix GRIDM  = as<NumericMatrix>(gridpars);
-  NumericVector TAU_G  = as<NumericVector>(tauG);
-  NumericVector MU_V   = as<NumericVector>(muV);
-  NumericVector SV     = as<NumericVector>(muV);
+  NumericMatrix GRIDM  = as<NumericMatrix>(gridpars_);
+  NumericVector TAU_G  = as<NumericVector>(tauG_);
+  List MU_V            = as<List>(muV_);
+  List SV              = as<List>(SV_);
   IntegerVector BLOCKS = as<IntegerVector>(blocks_);
   IntegerVector BLOCKS_SIZE = as<IntegerVector>(blockSizes_);
-  NumericVector DMCMCPAR = as<NumericVector>(dmcmcpar);
-  IntegerVector IMCMCPAR = as<IntegerVector>(imcmcpar);
+  NumericVector DMCMCPAR = as<NumericVector>(dmcmcpar_);
+  IntegerVector IMCMCPAR = as<IntegerVector>(imcmcpar_);
 
   x       = mat(X.begin(), X.nrow(), X.ncol(), TRUE);
   y       = mat(Y.begin(), Y.nrow(), Y.ncol(), TRUE);
@@ -209,8 +209,7 @@ SEXP corr_qr_fit(SEXP par_,
   lm              =  vec(DMCMCPAR.begin() + 2 + nblocks, nblocks, TRUE);
 
   // Prior parameters
-  Init_Prior_Param(L, m, G, nblocks, nkap, HYP, GRIDM, MU_V, SV,
-                   BLOCKS, BLOCKS_SIZE);
+  Init_Prior_Param(L, m, G, nblocks, nkap, HYP, GRIDM, MU_V, SV, BLOCKS, BLOCKS_SIZE);
 
   // Parameters
   gam0     = 0;
@@ -252,10 +251,9 @@ SEXP corr_qr_fit(SEXP par_,
 
   //adMCMC();
 
-  for(int i =0; i < nblocks; i++){
-    S[i].print();
-  }
-
+  // for(int i =0; i < nblocks; i++){
+  //   S[i].print();
+  // }
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
@@ -264,23 +262,21 @@ SEXP corr_qr_fit(SEXP par_,
 }
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
-                      NumericMatrix gridpars, NumericVector muV, NumericVector SV,
+                      NumericMatrix gridpars, List muV, List SV,
                       IntegerVector blocks_, IntegerVector bSize){
 
-  int reach, i, l, k, b, mu_point, S_point, block_point;
+  int reach, i, l, k, b, block_point;
+  NumericVector tempMu;
+  NumericMatrix tempS;
 
   Agrid   = cube(L, m, G);
   Rgrid   = cube(m, m, G);
   ldRgrid = vec(G);
   lpgrid  = vec(G);
 
-  std::vector<vec>  mu_init(nblocks);
-  std::vector<mat>  S_init(nblocks);
-  std::vector<uvec> blocks_init(nblocks);
-
-  mu = mu_init;
-  S  = S_init;
-  blocks = blocks_init;
+  mu.resize(nblocks);
+  S.resize(nblocks);
+  blocks.resize(nblocks);
 
   blockSizes = ivec(bSize.begin(), bSize.size(), TRUE);
 
@@ -311,11 +307,12 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
 
   // Initialize user provided block means, covariances
   for(b=0, mu_point=0, S_point=0, block_point=0; b < nblocks; b++){
-    mu[b] = vec(muV.begin()+mu_point, blockSizes[b], TRUE);
-    mu_point += blockSizes[b];
 
-    S[b] = mat(SV.begin()+S_point, blockSizes[b], blockSizes[b]);
-    S_point += pow(blockSizes[b],2);
+    tempMu = as<NumericVector>(MU_V[b]);
+    tempS  = as<NumericMatrix>(SV[b]);
+
+    mu[b]  = vec(tempMu.begin(), tempMu.size(), TRUE);
+    S[b]   = mat(tempS.begin(), tempS.nrow(), tempS.ncol(), TRUE);
 
     blocks[b] = arma::conv_to<uvec>::from(ivec(blocks_.begin()+block_point, blockSizes[b], TRUE));
     block_point += blockSizes[b];
@@ -851,7 +848,7 @@ void adMCMC(void){
 
       // Evaluate loglikelihood at proposed parameters
       lpvalnew = logpostFn(parSample, temp, FALSE);
-      /*
+
       lp_diff = lpvalnew - lpval;
 
       alpha[b] = exp(lp_diff);
