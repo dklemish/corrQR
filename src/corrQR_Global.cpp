@@ -151,16 +151,16 @@ mat parStore;     // stored posterior draws npar x nsamp
 SEXP corr_qr_fit(SEXP par_,
                  SEXP x_,
                  SEXP y_,
-                 SEXP hyper,
+                 SEXP hyper_,
                  SEXP dim_,
-                 SEXP gridpars,
-                 SEXP tauG,
+                 SEXP gridpars_,
+                 SEXP tauG_,
                  SEXP muV_,
                  SEXP SV_,
                  SEXP blocks_,
                  SEXP blockSizes_,
-                 SEXP dmcmcpar,
-                 SEXP imcmcpar){
+                 SEXP dmcmcpar_,
+                 SEXP imcmcpar_){
   /***** Initialization *****/
   // Input data
   // Convert SEXP objects to Rcpp objects
@@ -193,10 +193,10 @@ SEXP corr_qr_fit(SEXP par_,
   nkap = DIM[7];
 
   // MCMC parameters
-  niter = DIM[8];
-  thin  = DIM[9];
-  nsamp = DIM[10];
-  npar = (m+1) * (p+1) + 2;
+  niter   = DIM[8];
+  thin    = DIM[9];
+  nsamp   = DIM[10];
+  npar    = (m+1) * (p+1) + 2;
   nblocks = IMCMCPAR[0];
   refresh = IMCMCPAR[1];
   verbose = (bool) IMCMCPAR[2];
@@ -251,9 +251,9 @@ SEXP corr_qr_fit(SEXP par_,
 
   //adMCMC();
 
-  // for(int i =0; i < nblocks; i++){
-  //   S[i].print();
-  // }
+  for(int i =0; i < nblocks; i++){
+    S[i].print();
+  }
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
@@ -306,9 +306,9 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   }
 
   // Initialize user provided block means, covariances
-  for(b=0, mu_point=0, S_point=0, block_point=0; b < nblocks; b++){
+  for(b=0, block_point=0; b < nblocks; b++){
 
-    tempMu = as<NumericVector>(MU_V[b]);
+    tempMu = as<NumericVector>(muV[b]);
     tempS  = as<NumericMatrix>(SV[b]);
 
     mu[b]  = vec(tempMu.begin(), tempMu.size(), TRUE);

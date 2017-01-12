@@ -132,7 +132,10 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   d.kg <- abs(outer(tau.k, tau.g, "-"))^expo
   d.kk <- abs(outer(tau.k, tau.k, "-"))^expo
 
-  gridmats <- matrix(NA, nknots*(L + nknots)+2, ngrid)
+  #gridmats <- matrix(NA, nknots*(L + nknots)+2, ngrid)
+  A <- list()
+  R <- list()
+  log.det <- rep(0, ngrid)
 
   # Initialize gridmats
   K0 <- 0
@@ -145,10 +148,13 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
     diag(K.knot) <- 1 + 1e-10   # for numerical stability
 
     # R.knot, A.knot = R_g, A_g from paper
-    R.knot <- chol(K.knot)
-    A.knot <- solve(K.knot, K.grid)
+    #R.knot <- chol(K.knot)
+    #A.knot <- solve(K.knot, K.grid)
+    R[[i]] <- chol(K.knot)
+    A[[i]] <- solve(K.knot, K.grid)
+    log.det[i] <- sum(log(diag(R[[i]])))
 
-    gridmats[,i] <- c(c(A.knot), c(R.knot), sum(log(diag(R.knot))), lp.grid[i])
+    #gridmats[,i] <- c(c(A.knot), c(R.knot), sum(log(diag(R.knot))), lp.grid[i])
 
     K0 <- K0 + prior.grid[i] * K.knot
   }

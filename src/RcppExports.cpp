@@ -7,25 +7,25 @@
 using namespace Rcpp;
 
 // corr_qr_fit
-SEXP corr_qr_fit(SEXP par_, SEXP x_, SEXP y_, SEXP hyper, SEXP dim_, SEXP gridpars, SEXP tauG, SEXP muV_, SEXP SV_, SEXP blocks_, SEXP blockSizes_, SEXP dmcmcpar, SEXP imcmcpar);
-RcppExport SEXP corrQR_corr_qr_fit(SEXP par_SEXP, SEXP x_SEXP, SEXP y_SEXP, SEXP hyperSEXP, SEXP dim_SEXP, SEXP gridparsSEXP, SEXP tauGSEXP, SEXP muV_SEXP, SEXP SV_SEXP, SEXP blocks_SEXP, SEXP blockSizes_SEXP, SEXP dmcmcparSEXP, SEXP imcmcparSEXP) {
+SEXP corr_qr_fit(SEXP par_, SEXP x_, SEXP y_, SEXP hyper_, SEXP dim_, SEXP gridpars_, SEXP tauG_, SEXP muV_, SEXP SV_, SEXP blocks_, SEXP blockSizes_, SEXP dmcmcpar_, SEXP imcmcpar_);
+RcppExport SEXP corrQR_corr_qr_fit(SEXP par_SEXP, SEXP x_SEXP, SEXP y_SEXP, SEXP hyper_SEXP, SEXP dim_SEXP, SEXP gridpars_SEXP, SEXP tauG_SEXP, SEXP muV_SEXP, SEXP SV_SEXP, SEXP blocks_SEXP, SEXP blockSizes_SEXP, SEXP dmcmcpar_SEXP, SEXP imcmcpar_SEXP) {
 BEGIN_RCPP
     Rcpp::RObject __result;
     Rcpp::RNGScope __rngScope;
     Rcpp::traits::input_parameter< SEXP >::type par_(par_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type x_(x_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type y_(y_SEXP);
-    Rcpp::traits::input_parameter< SEXP >::type hyper(hyperSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type hyper_(hyper_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type dim_(dim_SEXP);
-    Rcpp::traits::input_parameter< SEXP >::type gridpars(gridparsSEXP);
-    Rcpp::traits::input_parameter< SEXP >::type tauG(tauGSEXP);
+    Rcpp::traits::input_parameter< SEXP >::type gridpars_(gridpars_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type tauG_(tauG_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type muV_(muV_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type SV_(SV_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type blocks_(blocks_SEXP);
     Rcpp::traits::input_parameter< SEXP >::type blockSizes_(blockSizes_SEXP);
-    Rcpp::traits::input_parameter< SEXP >::type dmcmcpar(dmcmcparSEXP);
-    Rcpp::traits::input_parameter< SEXP >::type imcmcpar(imcmcparSEXP);
-    __result = Rcpp::wrap(corr_qr_fit(par_, x_, y_, hyper, dim_, gridpars, tauG, muV_, SV_, blocks_, blockSizes_, dmcmcpar, imcmcpar));
+    Rcpp::traits::input_parameter< SEXP >::type dmcmcpar_(dmcmcpar_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type imcmcpar_(imcmcpar_SEXP);
+    __result = Rcpp::wrap(corr_qr_fit(par_, x_, y_, hyper_, dim_, gridpars_, tauG_, muV_, SV_, blocks_, blockSizes_, dmcmcpar_, imcmcpar_));
     return __result;
 END_RCPP
 }
