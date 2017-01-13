@@ -37,7 +37,6 @@ double dbasejoint(vec &);
 void   trape(double *x, double *h, int length, double *integral);
 double lpFn(vec, double temp);
 double lpFn1(vec);
-double lpFn2(double sigma);
 double logpostFn(vec, double temp, bool llonly);
 
 SEXP corr_qr_fit(SEXP par_,
@@ -194,7 +193,6 @@ SEXP corr_qr_fit(SEXP par_,
   ldRgrid = vec(LOGDET.begin(), LOGDET.size(), TRUE);
   lpgrid  = vec(LPGRID.begin(), LPGRID.size(), TRUE);
 
-
   // Dimensions
   n     = DIM[0];
   p     = DIM[1];
@@ -266,8 +264,11 @@ SEXP corr_qr_fit(SEXP par_,
   //adMCMC();
 
   S[0].print();
+  blocks[0].print("block 0");
   Agrid.slice(0).print("A");
   Rgrid.slice(0).print("R");
+
+  Rcout << "logsum(taugrid) = " << logsum(taugrid) << std::endl;
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
@@ -330,7 +331,7 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
 
   return;
 }
-/*
+
 double ppFn0(vec &par){
   // Calculate interpolated w0 function at all quantiles based on values of
   // function at m knots
@@ -364,7 +365,7 @@ double ppFn0(vec &par){
 
   return lps;
 }
-
+/*
 double ppFn(vec &par, int p){
   int i, j;
   double akapm, zss, lps;
@@ -397,12 +398,12 @@ double ppFn(vec &par, int p){
 
   return lps;
 }
-
+*/
 double logsum(vec L){
-  NumericVector lx(L.begin(), L.end());
-  double lxmax = *std::max_element(lx.begin(), lx.end());
-  double a = std::accumulate(lx.begin(), lx.end(), 0.0,
-                             [lxmax](double x, double y){return x + exp(y-lxmax);});
+  double lxmax = L.max();
+  double a = 0.0;
+
+  for(int i = 0; i < L.size(); i++) a += exp(L[i] - lxmax);
 
   return lxmax + log(a);
 }
@@ -410,7 +411,7 @@ double logsum(vec L){
 double logmean(vec L){
   return logsum(L) - log(L.size());
 }
-
+/*
 double lpFn(vec par, double temp){
 //double lpFn(vec &par, double temp){
   return logpostFn(par, temp, FALSE);
@@ -419,11 +420,6 @@ double lpFn(vec par, double temp){
 double lpFn1(vec par){
 //  double lpFn1(vec &par){
   return logpostFn(par, 1.0, TRUE);
-}
-
-double lpFn2(double sigma){
-  par0[(m+1)*(p+1)] = sigma;
-  return logpostFn(par0, 1.0, FALSE);
 }
 
 double logpostFn(vec par, double temp, bool llonly){
@@ -670,12 +666,11 @@ double logpostFn(vec par, double temp, bool llonly){
 
   if(!llonly){
     lp += lps0 + R::dlogis(nu, 0.0, 1.0, 1);
-    if(shrink) lp += dbasejoint(gam);
   }
 
   return lp;
 }
-
+*/
 void trape(double *x, double *h, int length, double *integral){
   // Calculates integral of function x over domain h via trapezoidal rule
   integral[0] = 0.0;
@@ -685,7 +680,7 @@ void trape(double *x, double *h, int length, double *integral){
   }
   return;
 }
-
+/*
 double dbase_joint_scl(double b, vec &gam){
   double a = 0.0;
   int j;
@@ -720,6 +715,7 @@ double nuFn(double z) {
 double nuFn_inv(double nu) {
   return 2.0*log((nu - 0.5)/5.5);
 }
+
 
 vec unitFn(vec u) {
   vec z(u);
@@ -938,4 +934,5 @@ void adMCMC(void){
     }
   }
 }
+
 */
