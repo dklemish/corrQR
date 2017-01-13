@@ -120,8 +120,8 @@ vec gam;      // current value of vector gamma (p x 1)
 vec w0;       // current values of w_0(tau_l) (L x 1)
 vec zeta0;    // current values of zeta(tau_l) (L x 1)
 vec zeta0dot; // current values of zeta.dot(tau_l) (L x 1)
-mat wMat;     // each col corresponds to current values of W_j (p x L)
-mat vMat;     // each col corresponds to W_j(zeta(tau)) (p x L)
+mat wMat;     // each col corresponds to current values of W_j (L x p)
+mat vMat;     // each col corresponds to W_j(zeta(tau)) (L x p)
 
 // Intermediate calculations
 mat wgrid;    // temp to store A_g * low rank w knots for each g
@@ -231,8 +231,8 @@ SEXP corr_qr_fit(SEXP par_,
   w0       = vec(L, fill::zeros);
   zeta0    = vec(L, fill::zeros);
   zeta0dot = vec(L, fill::zeros);
-  wMat     = mat(p, L, fill::zeros);
-  vMat     = mat(p, L, fill::zeros);
+  wMat     = mat(L, p, fill::zeros);
+  vMat     = mat(L, p, fill::zeros);
 
   // Intermediate calculations
   wgrid    = mat(L, G, fill::zeros);
@@ -263,12 +263,17 @@ SEXP corr_qr_fit(SEXP par_,
 
   //adMCMC();
 
-  S[0].print();
-  blocks[0].print("block 0");
-  Agrid.slice(0).print("A");
-  Rgrid.slice(0).print("R");
+  parSample.subvec(0, m-1).print("w0 parms");
+  Rcout << std::endl;
+  double junk = ppFn0(parSample);
+  Rcout << "junk = " << junk << std::endl;
+  w0.print("w0");
+  Rcout << std::endl;
 
-  Rcout << "logsum(taugrid) = " << logsum(taugrid) << std::endl;
+  vec test = vec(L, fill::zeros);
+  trape(w0.memptr(), taugrid.memptr(), L, test.memptr());
+  Rcout << "Length of test = " << test.size();
+  test.print("Integral test:");
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
@@ -332,6 +337,16 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   return;
 }
 
+void trisolve(mat& R, int m, vec& b, vec& x){
+  int i, j;
+
+  for(j = 0; j < m; j++){
+    for(x[j] = b[j], i = 0; i < j; i++)
+      x[j] -= x[i] * R.at(i,j);
+    x[j] /= R.at(j,j);
+  }
+}
+
 double ppFn0(vec &par){
   // Calculate interpolated w0 function at all quantiles based on values of
   // function at m knots
@@ -343,14 +358,15 @@ double ppFn0(vec &par){
 
   for(i = 0; i < G; i++){
     wgrid.col(i) = Agrid.slice(i) * wknot;
-    zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+    // zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+    // Note arma::solve currently not working as dgelsd_ not defined for some reason
+    // Instead use user-defined function
+    trisolve(Rgrid.slice(i), m, wknot, zknot);
+
     // zss = w_*j^T * C_**^-1 * W_j*
     zss = arma::dot(zknot, zknot);
 
     // Calculate p(W_{j*}|lambda_g)
-    // llgrid = part of multivariate t-distribution
-    // ldRgrid = log-determinant of C_** ^ -0.5
-    // lpgrid = log prior of0.1 + 0.5 * (double)m
     llgrid[i] = -(0.1 + 0.5 * (double)m) * log1p(0.5 * zss / 0.1);
   }
   // pgvec contains p_g(W_j*)
@@ -365,7 +381,7 @@ double ppFn0(vec &par){
 
   return lps;
 }
-/*
+
 double ppFn(vec &par, int p){
   int i, j;
   double akapm, zss, lps;
@@ -375,9 +391,15 @@ double ppFn(vec &par, int p){
 
   for(i = 0; i < G; i++){
     wgrid.col(i) = Agrid.slice(i) * wknot;
-    zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+    //zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+    // Note arma::solve currently not working as dgelsd_ not defined for some reason
+    // Instead use user-defined function
+    trisolve(Rgrid.slice(i), m, wknot, zknot);
+
+    // zss = w_*j^T * C_**^-1 * W_j*
     zss = arma::dot(zknot, zknot);
 
+    // Calculate p(W_{j*}|lambda_g)
     for(j = 0; j < nkap; j++){
       akapm = akap[j] + 0.5 * (double)m;
       lw[j] = -akapm * log1p(0.5 * zss/ bkap[j]) + lgamma(akapm) - lgamma(akap[j]) -
@@ -393,17 +415,16 @@ double ppFn(vec &par, int p){
   for(i = 0; i < G; i++)
     pgvec.at(i,p) = exp(pgvec.at(i,p) - lps);
 
-  //wMat.col(p) = wgrid * pgvec.col(p);
-  wMat.row(p-1) = (wgrid * pgvec.col(p)).t();
+  wMat.col(p-1) = wgrid * pgvec.col(p);
 
   return lps;
 }
-*/
+
 double logsum(vec L){
   double lxmax = L.max();
   double a = 0.0;
 
-  for(int i = 0; i < L.size(); i++) a += exp(L[i] - lxmax);
+  for(unsigned int i = 0; i < L.size(); i++) a += exp(L[i] - lxmax);
 
   return lxmax + log(a);
 }
@@ -411,6 +432,34 @@ double logsum(vec L){
 double logmean(vec L){
   return logsum(L) - log(L.size());
 }
+
+void trape(double *x, double *h, int length, double *integral){
+  // Calculates integral of function x over domain h via trapezoidal rule
+  integral[0] = 0.0;
+
+  for(int i = 1; i < length; i++){
+    integral[i] = integral[i-1] + 0.5 * (h[i]-h[i-1]) * (x[i]+x[i-1]);
+  }
+  return;
+}
+
+double sigFn(double z) {
+  return exp(z/2.0);
+}
+
+double sigFn_inv(double s) {
+  return 2.0 * log(s);
+}
+
+double nuFn(double z) {
+  return 0.5 + 5.5*exp(z/2.0);
+}
+
+double nuFn_inv(double nu) {
+  return 2.0*log((nu - 0.5)/5.5);
+}
+
+
 /*
 double lpFn(vec par, double temp){
 //double lpFn(vec &par, double temp){
@@ -671,15 +720,7 @@ double logpostFn(vec par, double temp, bool llonly){
   return lp;
 }
 */
-void trape(double *x, double *h, int length, double *integral){
-  // Calculates integral of function x over domain h via trapezoidal rule
-  integral[0] = 0.0;
 
-  for(int i = 1; i < length; i++){
-    integral[i] = integral[i-1] + 0.5 * (h[i]-h[i-1]) * (x[i]+x[i-1]);
-  }
-  return;
-}
 /*
 double dbase_joint_scl(double b, vec &gam){
   double a = 0.0;
@@ -699,23 +740,6 @@ double dbasejoint(vec &gam){
   }
   return logmean(lb);
 }
-
-double sigFn(double z) {
-  return exp(z/2.0);
-}
-
-double sigFn_inv(double s) {
-  return 2.0 * log(s);
-}
-
-double nuFn(double z) {
-  return 0.5 + 5.5*exp(z/2.0);
-}
-
-double nuFn_inv(double nu) {
-  return 2.0*log((nu - 0.5)/5.5);
-}
-
 
 vec unitFn(vec u) {
   vec z(u);
