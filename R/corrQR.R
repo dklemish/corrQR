@@ -151,7 +151,7 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
     #R.knot <- chol(K.knot)
     #A.knot <- solve(K.knot, K.grid)
     R[[i]] <- chol(K.knot)
-    A[[i]] <- solve(K.knot, K.grid)
+    A[[i]] <- t(solve(K.knot, K.grid))
     log.det[i] <- sum(log(diag(R[[i]])))
 
     #gridmats[,i] <- c(c(A.knot), c(R.knot), sum(log(diag(R.knot))), lp.grid[i])
@@ -357,7 +357,8 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
   dmcmc.par <- c(temp, 0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
 
   .Call('corrQR_corr_qr_fit', PACKAGE='corrQR',
-        par, x, y, hyperPar, dimpars, gridmats, tau.g,
+        par, x, y, hyperPar, dimpars, A, R,
+        log.det, lp.grid, tau.g,
         blocks.mu, blocks.S,
         blocks.ix, blocks.size, dmcmc.par, imcmc.par)
 

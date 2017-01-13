@@ -45,7 +45,10 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP y_,
                  SEXP hyper,
                  SEXP dim_,
-                 SEXP gridpars_,
+                 SEXP A_,
+                 SEXP R_,
+                 SEXP LOGDET_,
+                 SEXP LPGRID_,
                  SEXP tauG_,
                  SEXP muV_,
                  SEXP SV_,
@@ -55,7 +58,7 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP imcmcpar_);
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
-                      NumericMatrix gridpars, List muV, List SV,
+                      List A, List R, List muV, List SV,
                       IntegerVector blocks_, IntegerVector bSize);
 
 /**** Global variables ****/
@@ -81,10 +84,12 @@ int thin;     // thinning factor
 int nsamp;    // # of MCMC samples to keep
 int npar;     // # parameters to track
 int nblocks;  // # of MH blocks
-int refresh;  // adaption rate of adaptive MH
 bool verbose; // flag to print intermediate calc's
 int ticker;   // how often to update screen
 double temp;
+
+// Adaptive MCMC
+int refresh;  // adaption rate of adaptive MH
 double decay;
 ivec refresh_counter; //
 vec acpt_target;      //
@@ -100,7 +105,6 @@ vec lpgrid;   // log prior (lambda_j)
 std::vector<vec> mu; // init MH block means
 std::vector<mat> S;  // initial MH block covariances
 std::vector<uvec> blocks;
-
 ivec blockSizes;
 
 // Hyperparameters
@@ -153,7 +157,10 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP y_,
                  SEXP hyper_,
                  SEXP dim_,
-                 SEXP gridpars_,
+                 SEXP A_,
+                 SEXP R_,
+                 SEXP LOGDET_,
+                 SEXP LPGRID_,
                  SEXP tauG_,
                  SEXP muV_,
                  SEXP SV_,
@@ -169,7 +176,10 @@ SEXP corr_qr_fit(SEXP par_,
   NumericMatrix Y      = as<NumericMatrix>(y_);
   NumericVector HYP    = as<NumericVector>(hyper_);
   IntegerVector DIM    = as<IntegerVector>(dim_);
-  NumericMatrix GRIDM  = as<NumericMatrix>(gridpars_);
+  List A               = as<List>(A_);
+  List R               = as<List>(R_);
+  NumericVector LOGDET = as<NumericVector>(LOGDET_);
+  NumericVector LPGRID = as<NumericVector>(LPGRID_);
   NumericVector TAU_G  = as<NumericVector>(tauG_);
   List MU_V            = as<List>(muV_);
   List SV              = as<List>(SV_);
@@ -181,16 +191,20 @@ SEXP corr_qr_fit(SEXP par_,
   x       = mat(X.begin(), X.nrow(), X.ncol(), TRUE);
   y       = mat(Y.begin(), Y.nrow(), Y.ncol(), TRUE);
   taugrid = vec(TAU_G.begin(), TAU_G.size(), TRUE);
+  ldRgrid = vec(LOGDET.begin(), LOGDET.size(), TRUE);
+  lpgrid  = vec(LPGRID.begin(), LPGRID.size(), TRUE);
+
 
   // Dimensions
-  n    = DIM[0];
-  p    = DIM[1];
-  q    = DIM[2];
-  L    = DIM[3];
-  mid  = DIM[4];
-  m    = DIM[5];
-  G    = DIM[6];
-  nkap = DIM[7];
+  n     = DIM[0];
+  p     = DIM[1];
+  q     = DIM[2];
+  L     = DIM[3];
+  mid   = DIM[4];
+  m     = DIM[5];
+  G     = DIM[6];
+  nkap  = DIM[7];
+  ncorr = DIM[11];
 
   // MCMC parameters
   niter   = DIM[8];
@@ -209,7 +223,7 @@ SEXP corr_qr_fit(SEXP par_,
   lm              =  vec(DMCMCPAR.begin() + 2 + nblocks, nblocks, TRUE);
 
   // Prior parameters
-  Init_Prior_Param(L, m, G, nblocks, nkap, HYP, GRIDM, MU_V, SV, BLOCKS, BLOCKS_SIZE);
+  Init_Prior_Param(L, m, G, nblocks, nkap, HYP, A, R, MU_V, SV, BLOCKS, BLOCKS_SIZE);
 
   // Parameters
   gam0     = 0;
@@ -251,9 +265,9 @@ SEXP corr_qr_fit(SEXP par_,
 
   //adMCMC();
 
-  for(int i =0; i < nblocks; i++){
-    S[i].print();
-  }
+  S[0].print();
+  Agrid.slice(0).print("A");
+  Rgrid.slice(0).print("R");
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
@@ -262,12 +276,14 @@ SEXP corr_qr_fit(SEXP par_,
 }
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
-                      NumericMatrix gridpars, List muV, List SV,
+                      List A, List R, List muV, List SV,
                       IntegerVector blocks_, IntegerVector bSize){
 
-  int reach, i, l, k, b, block_point;
+  int reach, i, b, block_point;
   NumericVector tempMu;
   NumericMatrix tempS;
+  NumericMatrix tempA;
+  NumericMatrix tempR;
 
   Agrid   = cube(L, m, G);
   Rgrid   = cube(m, m, G);
@@ -291,18 +307,12 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
     lpkap[i] = hyp[reach++];
   }
 
-  // Initialize A_g & R_g matrices, ldRgrid & lpgrid
-  for(reach = 0, i = 0; i < G; i++){
-    for(l = 0; l < L; l++)
-      for(k = 0; k < m; k++)
-        Agrid(l,k,i) = gridpars[reach++];
+  for(i = 0; i < G; i++){
+    tempA = as<NumericMatrix>(A[i]);
+    Agrid.slice(i) = mat(tempA.begin(), tempA.nrow(), tempA.ncol(), TRUE);
 
-    for(k = 0; k < m; k++)
-      for(l = 0; l < m; l++)
-        Rgrid(l,k,i) = gridpars[reach++];
-
-    ldRgrid[i] = gridpars[reach++];
-    lpgrid[i]  = gridpars[reach++];
+    tempR = as<NumericMatrix>(R[i]);
+    Rgrid.slice(i) = mat(tempR.begin(), tempR.nrow(), tempR.ncol(), TRUE);
   }
 
   // Initialize user provided block means, covariances
