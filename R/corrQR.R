@@ -1,4 +1,4 @@
-corrQR <- function(x, y, nsamp = 1e3, thin = 10,
+corrQR <- function(x, y, sd, nsamp = 1e3, thin = 10,
                    incr = 0.01, initPar = "prior",
                    copula = "gaussian",
                    nknots = 6,
@@ -355,6 +355,8 @@ corrQR <- function(x, y, nsamp = 1e3, thin = 10,
 
   imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks))
   dmcmc.par <- c(temp, 0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
+
+  set.seed(sd)
 
   .Call('corrQR_corr_qr_fit', PACKAGE='corrQR',
         par, x, y, hyperPar, dimpars, A, R,

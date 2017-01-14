@@ -29,8 +29,8 @@ double Q0tail(double);
 double lf0tail(double);
 double ppFn0(vec &);
 double ppFn(vec &, int);
-double logsum(vec);
-double logmean(vec);
+double logsum(const vec &);
+double logmean(const vec &);
 void   adMCMC(void);
 double dbase_joint_scl(double, vec &);
 double dbasejoint(vec &);
@@ -38,6 +38,8 @@ void   trape(double *x, double *h, int length, double *integral);
 double lpFn(vec, double temp);
 double lpFn1(vec);
 double logpostFn(vec, double temp, bool llonly);
+
+void sampleCorrMatrix(int p, int d, mat& S, mat &corr);
 
 SEXP corr_qr_fit(SEXP par_,
                  SEXP x_,
@@ -261,19 +263,44 @@ SEXP corr_qr_fit(SEXP par_,
   acceptSample = mat(nsamp, nblocks, fill::zeros);  // stored MH acceptance history
   parStore     = mat(npar, nsamp, fill::zeros);     // stored posterior draws npar x nsamp
 
+  /*
+   parSample.subvec(0, m-1).print("w0 parms");
+   Rcout << std::endl;
+   double junk = ppFn0(parSample);
+   Rcout << "junk = " << junk << std::endl;
+   w0.print("w0");
+   Rcout << std::endl;
+
+   vec test = vec(L, fill::zeros);
+   trape(w0.memptr(), taugrid.memptr(), L, test.memptr());
+   Rcout << "Length of test = " << test.size();
+   test.print("Integral test:");
+   */
+
+  mat test = mat(2,2);
+  test(0,0)=1; test(1,0)=0.5; test(0,1)=0.5; test(1,1)=1;
+  mat test2 = mat(2,2, fill::zeros);
+
+  GetRNGstate();
+
+  sampleCorrMatrix(2, 100, test, test2);
+  test2.print("test2 after function call");
+
+  sampleCorrMatrix(2, 100, test2, test2);
+  test2.print("test2 after function call");
+
+  sampleCorrMatrix(2, 100, test2, test2);
+  test2.print("test2 after function call");
+
+  for(int i = 0; i < 100; i++){
+  sampleCorrMatrix(2, 100, test2, test2);
+  }
+
+  test2.print("test2 after 100 function call");
+
   //adMCMC();
 
-  parSample.subvec(0, m-1).print("w0 parms");
-  Rcout << std::endl;
-  double junk = ppFn0(parSample);
-  Rcout << "junk = " << junk << std::endl;
-  w0.print("w0");
-  Rcout << std::endl;
-
-  vec test = vec(L, fill::zeros);
-  trape(w0.memptr(), taugrid.memptr(), L, test.memptr());
-  Rcout << "Length of test = " << test.size();
-  test.print("Integral test:");
+  PutRNGstate();
 
   return Rcpp::List::create(Rcpp::Named("X") = x,
                             Rcpp::Named("Y") = y,
@@ -337,6 +364,7 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   return;
 }
 
+/*
 void trisolve(mat& R, int m, vec& b, vec& x){
   int i, j;
 
@@ -346,6 +374,7 @@ void trisolve(mat& R, int m, vec& b, vec& x){
     x[j] /= R.at(j,j);
   }
 }
+*/
 
 double ppFn0(vec &par){
   // Calculate interpolated w0 function at all quantiles based on values of
@@ -358,10 +387,10 @@ double ppFn0(vec &par){
 
   for(i = 0; i < G; i++){
     wgrid.col(i) = Agrid.slice(i) * wknot;
-    // zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+    zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
     // Note arma::solve currently not working as dgelsd_ not defined for some reason
     // Instead use user-defined function
-    trisolve(Rgrid.slice(i), m, wknot, zknot);
+    //trisolve(Rgrid.slice(i), m, wknot, zknot);
 
     // zss = w_*j^T * C_**^-1 * W_j*
     zss = arma::dot(zknot, zknot);
@@ -391,10 +420,10 @@ double ppFn(vec &par, int p){
 
   for(i = 0; i < G; i++){
     wgrid.col(i) = Agrid.slice(i) * wknot;
-    //zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
+    zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
     // Note arma::solve currently not working as dgelsd_ not defined for some reason
     // Instead use user-defined function
-    trisolve(Rgrid.slice(i), m, wknot, zknot);
+    //trisolve(Rgrid.slice(i), m, wknot, zknot);
 
     // zss = w_*j^T * C_**^-1 * W_j*
     zss = arma::dot(zknot, zknot);
@@ -420,7 +449,7 @@ double ppFn(vec &par, int p){
   return lps;
 }
 
-double logsum(vec L){
+double logsum(const vec& L){
   double lxmax = L.max();
   double a = 0.0;
 
@@ -429,7 +458,7 @@ double logsum(vec L){
   return lxmax + log(a);
 }
 
-double logmean(vec L){
+double logmean(const vec& L){
   return logsum(L) - log(L.size());
 }
 
@@ -459,6 +488,44 @@ double nuFn_inv(double nu) {
   return 2.0*log((nu - 0.5)/5.5);
 }
 
+void sampleCorrMatrix(int p, int d, mat& S, mat &corr){
+  // S = base covariance / correlation matrix
+  // corr = matrix result
+  // d = degrees of freedom of inverse Wishart
+  // p = dimension of S
+
+  // Use Bartlett decomposition to simulate a covariance
+  // matrix, then scale result to a correlation matrix.
+  int i, j;
+  vec V = vec(p);
+  mat Z = mat(p,p, fill::zeros);
+  mat D = eye<mat>(p,p);
+  mat C = chol(S);
+
+  GetRNGstate();
+
+  for(i = 0; i < p; i++){
+    V[i] = sqrt(R::rchisq(d-i+1));
+  }
+
+  for(i = 1; i < p; i++){
+    for(j = 0; j < i; j++){
+      Z.at(j,i) = R::rnorm(0,1);
+    }
+  }
+
+  PutRNGstate();
+
+  Z.diag() = V;
+  Z = C * Z.t() * Z * C.t();
+
+  D.diag() = 1 / Z.diag();
+  for(i=0; i < p; i++){
+    D.at(i,i) = sqrt(D.at(i,i));
+  }
+
+  corr = D * Z * D;
+}
 
 /*
 double lpFn(vec par, double temp){
