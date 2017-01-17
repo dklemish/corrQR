@@ -35,11 +35,15 @@ void   adMCMC(void);
 double dbase_joint_scl(double, vec &);
 double dbasejoint(vec &);
 void   trape(double *x, double *h, int length, double *integral);
-double lpFn(vec, double temp);
-double lpFn1(vec);
-double logpostFn(vec, double temp, bool llonly);
+// double lpFn(vec, double temp);
+// double lpFn1(vec);
+// double logpostFn(vec, double temp, bool llonly);
 
-void sampleCorrMatrix(int p, int d, mat& S, mat &corr);
+double lpFn(vec &, double temp);
+double lpFn1(vec &);
+double logpostFn(vec &, double temp, bool llonly);
+
+void rCorrMat(int p, int d, mat& S, mat &corr);
 
 SEXP corr_qr_fit(SEXP par_,
                  SEXP x_,
@@ -83,7 +87,7 @@ int ncorr; // # of correlation parameters for Gaussian copula
 int niter;    // MCMC iterations
 int thin;     // thinning factor
 int nsamp;    // # of MCMC samples to keep
-int npar;     // # parameters to track
+int npar;     // # parameters to track per response variable
 int nblocks;  // # of MH blocks
 bool verbose; // flag to print intermediate calc's
 int ticker;   // how often to update screen
@@ -283,17 +287,17 @@ SEXP corr_qr_fit(SEXP par_,
 
   GetRNGstate();
 
-  sampleCorrMatrix(2, 100, test, test2);
+  rCorrMat(2, 100, test, test2);
   test2.print("test2 after function call");
 
-  sampleCorrMatrix(2, 100, test2, test2);
+  rCorrMat(2, 100, test2, test2);
   test2.print("test2 after function call");
 
-  sampleCorrMatrix(2, 100, test2, test2);
+  rCorrMat(2, 100, test2, test2);
   test2.print("test2 after function call");
 
   for(int i = 0; i < 100; i++){
-  sampleCorrMatrix(2, 100, test2, test2);
+  rCorrMat(2, 100, test2, test2);
   }
 
   test2.print("test2 after 100 function call");
@@ -364,18 +368,6 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   return;
 }
 
-/*
-void trisolve(mat& R, int m, vec& b, vec& x){
-  int i, j;
-
-  for(j = 0; j < m; j++){
-    for(x[j] = b[j], i = 0; i < j; i++)
-      x[j] -= x[i] * R.at(i,j);
-    x[j] /= R.at(j,j);
-  }
-}
-*/
-
 double ppFn0(vec &par){
   // Calculate interpolated w0 function at all quantiles based on values of
   // function at m knots
@@ -388,9 +380,6 @@ double ppFn0(vec &par){
   for(i = 0; i < G; i++){
     wgrid.col(i) = Agrid.slice(i) * wknot;
     zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
-    // Note arma::solve currently not working as dgelsd_ not defined for some reason
-    // Instead use user-defined function
-    //trisolve(Rgrid.slice(i), m, wknot, zknot);
 
     // zss = w_*j^T * C_**^-1 * W_j*
     zss = arma::dot(zknot, zknot);
@@ -421,9 +410,6 @@ double ppFn(vec &par, int p){
   for(i = 0; i < G; i++){
     wgrid.col(i) = Agrid.slice(i) * wknot;
     zknot = arma::solve(arma::trimatu(Rgrid.slice(i)), wknot);
-    // Note arma::solve currently not working as dgelsd_ not defined for some reason
-    // Instead use user-defined function
-    //trisolve(Rgrid.slice(i), m, wknot, zknot);
 
     // zss = w_*j^T * C_**^-1 * W_j*
     zss = arma::dot(zknot, zknot);
@@ -488,7 +474,7 @@ double nuFn_inv(double nu) {
   return 2.0*log((nu - 0.5)/5.5);
 }
 
-void sampleCorrMatrix(int p, int d, mat& S, mat &corr){
+void rCorrMat(int p, int d, mat& S, mat &corr){
   // S = base covariance / correlation matrix
   // corr = matrix result
   // d = degrees of freedom of inverse Wishart
@@ -500,7 +486,7 @@ void sampleCorrMatrix(int p, int d, mat& S, mat &corr){
   vec V = vec(p);
   mat Z = mat(p,p, fill::zeros);
   mat D = eye<mat>(p,p);
-  mat C = chol(S);
+  mat C = chol(S.i());
 
   GetRNGstate();
 
@@ -517,7 +503,7 @@ void sampleCorrMatrix(int p, int d, mat& S, mat &corr){
   PutRNGstate();
 
   Z.diag() = V;
-  Z = C * Z.t() * Z * C.t();
+  Z = (C * Z.t() * Z * C.t()).i();
 
   D.diag() = 1 / Z.diag();
   for(i=0; i < p; i++){
@@ -527,20 +513,20 @@ void sampleCorrMatrix(int p, int d, mat& S, mat &corr){
   corr = D * Z * D;
 }
 
-/*
-double lpFn(vec par, double temp){
-//double lpFn(vec &par, double temp){
+
+//double lpFn(vec par, double temp){
+double lpFn(vec &par, double temp){
   return logpostFn(par, temp, FALSE);
 }
 
-double lpFn1(vec par){
-//  double lpFn1(vec &par){
+//double lpFn1(vec par){
+double lpFn1(vec &par){
   return logpostFn(par, 1.0, TRUE);
 }
 
-double logpostFn(vec par, double temp, bool llonly){
-//double logpostFn(vec &par, double temp, bool llonly){
-  int i, j, l;
+//double logpostFn(vec par, double temp, bool llonly){
+double logpostFn(vec &par, double temp, bool llonly){
+  int i, j, k, l;
   const int par_position = (p+1)*m, gam_pos_offset = p - 1;
   double zeta0tot, lps0;
   double Q_L = -std::numeric_limits<double>::infinity();
@@ -557,236 +543,237 @@ double logpostFn(vec par, double temp, bool llonly){
 
   const double shrinkFactor = 1;
 
-  gam0 = par[par_position];
-  gam  = par.subvec(par_position+1, par_position + gam_pos_offset + 1);
-  sigma = sigFn(par[par_position + gam_pos_offset + 2]);
-  nu    = nuFn(par[par_position + gam_pos_offset + 3]);
+  for(k = 0; k < q; k++){
+    gam0 = par[k*npar + par_position];
+    gam  = par.subvec(k*npar + par_position + 1,
+                      k*npar + par_position + gam_pos_offset + 1);
+    sigma = sigFn(par[k*npar + par_position + gam_pos_offset + 2]);
+    nu    = nuFn(par[k*npar + par_position + gam_pos_offset + 3]);
 
-  // Set vector w_j (j=0,...,p) to current interpolation of functions at specified knots
-  lps0 = ppFn0(par);
-  for(j = 1; j <= p; j++) lps0 += ppFn(par, j);
+    // Set vector w_j (j=0,...,p) to current interpolation of functions at specified knots
+    lps0 = ppFn0(par.subvec());
+    for(j = 1; j <= p; j++) lps0 += ppFn(par, j);
 
-  if(temp > 0.0){
-    // Initialize log-likelihood vector
-    llvec.fill(-std::numeric_limits<double>::infinity());
+    if(temp > 0.0){
+      // Initialize log-likelihood vector
+      llvec.fill(-std::numeric_limits<double>::infinity());
 
-    // Calculate zeta, zetadot
-    w0max = w0.max(); // Armadillo max function
+      // Calculate zeta, zetadot
+      w0max = w0.max(); // Armadillo max function
 
-    zeta0dot = arma::exp(shrinkFactor * (w0-w0max));
-    trape(zeta0dot.memptr() + 1, taugrid.memptr() + 1, L-1, zeta0.memptr() + 1);
+      zeta0dot = arma::exp(shrinkFactor * (w0-w0max));
+      trape(zeta0dot.memptr() + 1, taugrid.memptr() + 1, L-1, zeta0.memptr() + 1);
 
-    // zeta0[0] = 0, zeta0[1] = 1 by definition
-    // rescale zeta0 so that it lies in [0,1] for tau != 0, 1
-    zeta0tot = zeta0[L-2];
+      // zeta0[0] = 0, zeta0[1] = 1 by definition
+      // rescale zeta0 so that it lies in [0,1] for tau != 0, 1
+      zeta0tot = zeta0[L-2];
 
-    zeta0[0] = 0.0; zeta0[L-1] = 1.0;
-    zeta0.subvec(1,L-2) = taugrid[1] + (taugrid[L-2] - taugrid[1]) * zeta0.subvec(1,L-2) / zeta0tot;
+      zeta0[0] = 0.0; zeta0[L-1] = 1.0;
+      zeta0.subvec(1,L-2) = taugrid[1] + (taugrid[L-2] - taugrid[1]) * zeta0.subvec(1,L-2) / zeta0tot;
 
-    zeta0dot[0] = 0.0; zeta0dot[L-1] = 0.0;
-    zeta0dot.subvec(1,L-2) = (taugrid[L-2] - taugrid[1]) * zeta0dot.subvec(1,L-2) / zeta0tot;
+      zeta0dot[0] = 0.0; zeta0dot[L-1] = 0.0;
+      zeta0dot.subvec(1,L-2) = (taugrid[L-2] - taugrid[1]) * zeta0dot.subvec(1,L-2) / zeta0tot;
 
-    // Approximate v = w(zeta(tau))
-    // Linearly interpolate value of w function at tau's transformed by zeta
+      // Approximate v = w(zeta(tau))
+      // Linearly interpolate value of w function at tau's transformed by zeta
 
-    for(j = 0; j < p; j++){
-      for(l = 1; l < L-1; l++){
-        //Rcout << "12a: "; arma::find(zeta0[l] >= taugrid, 1, "last").t().print();
-        //Rcout << "12a: " << arma::as_scalar(arma::find(zeta0[l] >= taugrid, 1, "last")) << std::endl;
-        lower_ind = arma::as_scalar(arma::find(zeta0[l] >= taugrid, 1, "last"));
-        upper_ind = lower_ind + 1;
-        //Rcout << "12b: " << upper_ind << std::endl;
-        //Rcout << "12c: t_l = " << taugrid[lower_ind] << std::endl;
-        t_l = arma::as_scalar(taugrid[lower_ind]);
-        //Rcout << "12d: t_u = " << taugrid[upper_ind] << std::endl;
-        t_u = arma::as_scalar(taugrid[upper_ind]);
-        //Rcout << "12e: w_l = " << wMat.at(lower_ind, j) << std::endl;
-        w_l = arma::as_scalar(wMat.at(lower_ind, j));
-        //Rcout << "12f: w_u =" << wMat.at(upper_ind, j) << std::endl;
-        w_u = arma::as_scalar(wMat.at(upper_ind, j));
+      for(j = 0; j < p; j++){
+        for(l = 1; l < L-1; l++){
+          //Rcout << "12a: "; arma::find(zeta0[l] >= taugrid, 1, "last").t().print();
+          //Rcout << "12a: " << arma::as_scalar(arma::find(zeta0[l] >= taugrid, 1, "last")) << std::endl;
+          lower_ind = arma::as_scalar(arma::find(zeta0[l] >= taugrid, 1, "last"));
+          upper_ind = lower_ind + 1;
+          //Rcout << "12b: " << upper_ind << std::endl;
+          //Rcout << "12c: t_l = " << taugrid[lower_ind] << std::endl;
+          t_l = arma::as_scalar(taugrid[lower_ind]);
+          //Rcout << "12d: t_u = " << taugrid[upper_ind] << std::endl;
+          t_u = arma::as_scalar(taugrid[upper_ind]);
+          //Rcout << "12e: w_l = " << wMat.at(lower_ind, j) << std::endl;
+          w_l = arma::as_scalar(wMat.at(lower_ind, j));
+          //Rcout << "12f: w_u =" << wMat.at(upper_ind, j) << std::endl;
+          w_u = arma::as_scalar(wMat.at(upper_ind, j));
 
-        vMat.at(l,j) = w_l + (zeta0[l]-t_l)*(w_u - w_l)/(t_u - t_l);
-      }
-      vMat.at(0,j) = wMat.at(0,j);
-      vMat.at(L-1,j) = wMat.at(L-1,j);
-    }
-    //vMat.print("vMat");
-
-    vMat = wMat;
-
-    // Compute ||v_l||^2
-    for(l = 0; l < L; l++) vNormSq[l] = arma::dot(vMat.col(l), vMat.col(l));
-
-    if(vNormSq.min() > 0.0){
-      a = x * vMat;  // a is n x L
-
-      for(l = 0; l < L; l++){
-        //aX[l] = ;
-        bdot_adj = (-1 * a.col(l).min() / sqrt(vNormSq[l])) * sqrt(1.0 + vNormSq[l]);
-        aTilde.col(l) = a.col(l) / bdot_adj;
-        vTilde.col(l) = vMat.col(l) / bdot_adj;
-      }
-
-      // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
-      // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
-      // for each observation i
-      for(i = 0; i < n; i++)
-        Q0vec[i] = gam0 + arma::dot(x.row(i), gam);
-
-      //resLin = y - Q0vec;
-
-      // % is element-wise multiplication for Armadillo vectors
-      b0dot = sigma * q0(zeta0, nu) % zeta0dot;
-
-      //for(j = 0; j < p; j++)
-      //bdot.row(j) = b0dot.t() % vTilde.row(j);
-
-      //b0dot.t().print("b0dot"); Rcout << std::endl;
-      //bdot.print("bdot"); Rcout << std::endl;
-      //Rcout << "b0dot" << std::endl; for(i=0; i < b0dot.n_elem; i++) Rcout << b0dot[i] << "\t"; Rcout << std::endl;
-      //Rcout << "bdot" << std::endl; for(i=0; i < bdot.n_cols; i++) Rcout << bdot.at(0,i) << "\t"; Rcout << std::endl;
-
-      //arma::vec b0dotrev = arma::flipud(b0dot);
-      //arma::mat bdotrev  = arma::fliplr(bdot);
-
-      //Rcout << "b0dot reverse" << std::endl; for(i=0; i < b0dotrev.n_elem; i++) Rcout << b0dotrev[i] << "\t"; Rcout << std::endl;
-      //Rcout << "bdot reverse"  << std::endl; for(i=0; i < bdotrev.n_cols; i++) Rcout << bdotrev.at(0,i) << "\t"; Rcout << std::endl;
-
-      //vTilde.print("vTilde"); Rcout << std::endl;
-
-      // //Q0Pos.subvec(0, mid) = trape(b0dot.subvec(mid, L-1), taugrid.subvec(mid,L-1));
-      // Q0Pos.subvec(0, mid) = trape(b0dot.subvec(mid, L-1), taugrid.subvec(mid,L-1));
-      // Q0Pos[L-mid] = std::numeric_limits<double>::infinity();
-      //
-      // //Q0Neg.subvec(0,mid) = trape(arma::flipud(b0dot.subvec(0, mid)), -1*arma::flipud(taugrid.subvec(0,mid)));
-      // Q0Neg.subvec()
-      // Q0Neg[mid+1] = std::numeric_limits<double>::infinity();
-      //
-      // for(j = 0; j < p; j++){
-      //   bPos.row(j) = trape(bdot.row(j).subvec(mid, L-1).t(), taugrid.subvec(mid, L-1)).t();
-      //   bNeg.row(j) = trape(arma::fliplr(bdot.row(j).subvec(0,mid)).t(),
-      //                    -1*arma::flipud(taugrid.subvec(0, mid))).t();
-      // }
-
-      //Q0Pos.t().print("Q0Pos");
-      //Q0Neg.t().print("Q0Neg");
-      //bPos.print("bPos");
-      //bNeg.print("bNeg");
-      //Rcout << std::endl;
-
-      //sigmat1 = sigmat2 = sigma;
-
-      for(i = 0; i < n; i++){
-        //Rcout <<  i << " resLin[i]=" << std::setprecision(4) << resLin[i] << "\t";
-        //if(resLin[i] == 0.0){
-        y_i = y[i];
-        q0_i = Q0vec[i];
-
-        //Rcout << "a ";
-
-        if(y_i == q0_i){
-          // Y_i exactly equals modeled median, conditional on X_i
-          llvec[i] = -log(b0dot[mid] + arma::dot(x.row(i), bdot.col(mid)));
+          vMat.at(l,j) = w_l + (zeta0[l]-t_l)*(w_u - w_l)/(t_u - t_l);
         }
-        //else if(resLin[i] > 0.0){
-        else if(y_i > q0_i){
-          // Y_i > median
-          Q_U = q0_i;
-          l = mid;
+        vMat.at(0,j) = wMat.at(0,j);
+        vMat.at(L-1,j) = wMat.at(L-1,j);
+      }
+      //vMat.print("vMat");
 
-          while(y_i > Q_U && l < L-1){
-            l++;
-            Q_L = Q_U;
-            Q_U = Q_L + 0.5*(taugrid[l]-taugrid[l-1])*(b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+      vMat = wMat;
 
-            //QPosold = QPos;
-            //QPos = Q0Pos[l] + arma::dot(x.row(i), bPos.col(l));
-            //for(QPos = Q0Pos[l], j = 0; j < p; j++) QPos += x.at(i,j) * bPos.at(j,l);
-            //Rcout << std::setprecision(4) << QPos << "\t";
-          }
-          if(l == L){
-            Q_U = std::numeric_limits<double>::infinity();
-          }
+      // Compute ||v_l||^2
+      for(l = 0; l < L; l++) vNormSq[l] = arma::dot(vMat.col(l), vMat.col(l));
 
-          // if(prior.cens[i]){
-          //   params.llvec[i] = log(1.0 - dat.taugrid[d.mid + l]);
-          // } else {
-          //   if(l == d.L - d.mid - 1)
-          //     params.llvec[i] = lf0tail(Q0tail(dat.taugrid[d.L-2]) + (params.resLin[i] - params.QPos)/params.sigma) - log(params.sigma);
-          //   else
-          //     params.llvec[i] = log(dat.taugrid[d.mid+l] - dat.taugrid[d.mid+l-1]) - log(params.QPos - params.QPosold);
-          //
-          //   //Rcout << "ll==" << std::setprecision(4) << llvec[i] << std::endl;
-          // }
-          //Rcout << "y_" << i << "; l= " << l << "; Q_U= " << Q_U << std::endl;
+      if(vNormSq.min() > 0.0){
+        a = x * vMat;  // a is n x L
+
+        for(l = 0; l < L; l++){
+          //aX[l] = ;
+          bdot_adj = (-1 * a.col(l).min() / sqrt(vNormSq[l])) * sqrt(1.0 + vNormSq[l]);
+          aTilde.col(l) = a.col(l) / bdot_adj;
+          vTilde.col(l) = vMat.col(l) / bdot_adj;
         }
-        else {
-          l = mid + 1;
-          Q_L = q0_i;
-          //QNegold = 0.0;
-          //QNeg = Q0Neg[l] + arma::dot(x.row(i), bNeg.col(l));
-          //for(QNeg = Q0Neg[l], j = 0; j < p; j++) QNeg += x.at(i,j) * bNeg.at(j,l);
-          //Rcout << "QNeg" << "\t" << QNeg << "\t";
 
-          //while(resLin[i] < -QNeg && l < mid){
-          while(y_i < Q_L && l > 0){
-            l--;
-            Q_U = Q_L;
-            Q_L = Q_U - 0.5*(taugrid[l]-taugrid[l-1])*(b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
-            //QNegold = QNeg;
+        // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
+        // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
+        // for each observation i
+        for(i = 0; i < n; i++)
+          Q0vec[i] = gam0 + arma::dot(x.row(i), gam);
+
+        //resLin = y - Q0vec;
+
+        // % is element-wise multiplication for Armadillo vectors
+        b0dot = sigma * q0(zeta0, nu) % zeta0dot;
+
+        //for(j = 0; j < p; j++)
+        //bdot.row(j) = b0dot.t() % vTilde.row(j);
+
+        //b0dot.t().print("b0dot"); Rcout << std::endl;
+        //bdot.print("bdot"); Rcout << std::endl;
+        //Rcout << "b0dot" << std::endl; for(i=0; i < b0dot.n_elem; i++) Rcout << b0dot[i] << "\t"; Rcout << std::endl;
+        //Rcout << "bdot" << std::endl; for(i=0; i < bdot.n_cols; i++) Rcout << bdot.at(0,i) << "\t"; Rcout << std::endl;
+
+        //arma::vec b0dotrev = arma::flipud(b0dot);
+        //arma::mat bdotrev  = arma::fliplr(bdot);
+
+        //Rcout << "b0dot reverse" << std::endl; for(i=0; i < b0dotrev.n_elem; i++) Rcout << b0dotrev[i] << "\t"; Rcout << std::endl;
+        //Rcout << "bdot reverse"  << std::endl; for(i=0; i < bdotrev.n_cols; i++) Rcout << bdotrev.at(0,i) << "\t"; Rcout << std::endl;
+
+        //vTilde.print("vTilde"); Rcout << std::endl;
+
+        // //Q0Pos.subvec(0, mid) = trape(b0dot.subvec(mid, L-1), taugrid.subvec(mid,L-1));
+        // Q0Pos.subvec(0, mid) = trape(b0dot.subvec(mid, L-1), taugrid.subvec(mid,L-1));
+        // Q0Pos[L-mid] = std::numeric_limits<double>::infinity();
+        //
+        // //Q0Neg.subvec(0,mid) = trape(arma::flipud(b0dot.subvec(0, mid)), -1*arma::flipud(taugrid.subvec(0,mid)));
+        // Q0Neg.subvec()
+        // Q0Neg[mid+1] = std::numeric_limits<double>::infinity();
+        //
+        // for(j = 0; j < p; j++){
+        //   bPos.row(j) = trape(bdot.row(j).subvec(mid, L-1).t(), taugrid.subvec(mid, L-1)).t();
+        //   bNeg.row(j) = trape(arma::fliplr(bdot.row(j).subvec(0,mid)).t(),
+        //                    -1*arma::flipud(taugrid.subvec(0, mid))).t();
+        // }
+
+        //Q0Pos.t().print("Q0Pos");
+        //Q0Neg.t().print("Q0Neg");
+        //bPos.print("bPos");
+        //bNeg.print("bNeg");
+        //Rcout << std::endl;
+
+        //sigmat1 = sigmat2 = sigma;
+
+        for(i = 0; i < n; i++){
+          //Rcout <<  i << " resLin[i]=" << std::setprecision(4) << resLin[i] << "\t";
+          //if(resLin[i] == 0.0){
+          y_i = y[i];
+          q0_i = Q0vec[i];
+
+          //Rcout << "a ";
+
+          if(y_i == q0_i){
+            // Y_i exactly equals modeled median, conditional on X_i
+            llvec[i] = -log(b0dot[mid] + arma::dot(x.row(i), bdot.col(mid)));
+          }
+          //else if(resLin[i] > 0.0){
+          else if(y_i > q0_i){
+            // Y_i > median
+            Q_U = q0_i;
+            l = mid;
+
+            while(y_i > Q_U && l < L-1){
+              l++;
+              Q_L = Q_U;
+              Q_U = Q_L + 0.5*(taugrid[l]-taugrid[l-1])*(b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+
+              //QPosold = QPos;
+              //QPos = Q0Pos[l] + arma::dot(x.row(i), bPos.col(l));
+              //for(QPos = Q0Pos[l], j = 0; j < p; j++) QPos += x.at(i,j) * bPos.at(j,l);
+              //Rcout << std::setprecision(4) << QPos << "\t";
+            }
+            if(l == L){
+              Q_U = std::numeric_limits<double>::infinity();
+            }
+
+            // if(prior.cens[i]){
+            //   params.llvec[i] = log(1.0 - dat.taugrid[d.mid + l]);
+            // } else {
+            //   if(l == d.L - d.mid - 1)
+            //     params.llvec[i] = lf0tail(Q0tail(dat.taugrid[d.L-2]) + (params.resLin[i] - params.QPos)/params.sigma) - log(params.sigma);
+            //   else
+            //     params.llvec[i] = log(dat.taugrid[d.mid+l] - dat.taugrid[d.mid+l-1]) - log(params.QPos - params.QPosold);
+            //
+            //   //Rcout << "ll==" << std::setprecision(4) << llvec[i] << std::endl;
+            // }
+            //Rcout << "y_" << i << "; l= " << l << "; Q_U= " << Q_U << std::endl;
+          }
+          else {
+            l = mid + 1;
+            Q_L = q0_i;
+            //QNegold = 0.0;
             //QNeg = Q0Neg[l] + arma::dot(x.row(i), bNeg.col(l));
             //for(QNeg = Q0Neg[l], j = 0; j < p; j++) QNeg += x.at(i,j) * bNeg.at(j,l);
-            //Rcout << std::setprecision(4) << QNeg << "\t";
-          }
-          if(l == 0){
-            Q_L = -std::numeric_limits<double>::infinity();
-          }
+            //Rcout << "QNeg" << "\t" << QNeg << "\t";
 
-          // if(prior.cens[i]){
-          //   params.llvec[i] = log(1.0 - dat.taugrid[d.mid - l]);
-          // } else {
-          //   if(l == d.mid)
-          //     params.llvec[i] = lf0tail(Q0tail(dat.taugrid[1]) + (params.resLin[i] + params.QNeg)/params.sigma) - log(params.sigma);
-          //   else
-          //     params.llvec[i] = log(dat.taugrid[d.mid-l+1]-dat.taugrid[d.mid-l]) - log(params.QNeg - params.QNegold);
-          // }
-          //Rcout << "ll=" << std::setprecision(4) << llvec[i] << std::endl;
-          //Rcout << "y_" << i << "; l= " << l << "; Q_L= " << Q_L << std::endl;
-        }
-        //Rcout << "b " << std::endl;
-        if(Q_L == -std::numeric_limits<double>::infinity() || Q_U == std::numeric_limits<double>::infinity()){
-          llvec[i] = -std::numeric_limits<double>::infinity();
-        }
-        else{
-          alpha = (y_i - Q_L) / (Q_U - Q_L);
-          llvec[i] = -1*log((1-alpha)*b0dot[l-1]*(1+aTilde.at(i,l-1)) + alpha*b0dot[l]*(1+aTilde.at(i,l)));
-        }
-        //if(llvec[i] == -std::numeric_limits<double>::infinity())
-        //Rprintf("i = %d, ll[i] = %g, resLin[i] = %g, l = %d\n", i, llvec[i], resLin[i], l);
+            //while(resLin[i] < -QNeg && l < mid){
+            while(y_i < Q_L && l > 0){
+              l--;
+              Q_U = Q_L;
+              Q_L = Q_U - 0.5*(taugrid[l]-taugrid[l-1])*(b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+              //QNegold = QNeg;
+              //QNeg = Q0Neg[l] + arma::dot(x.row(i), bNeg.col(l));
+              //for(QNeg = Q0Neg[l], j = 0; j < p; j++) QNeg += x.at(i,j) * bNeg.at(j,l);
+              //Rcout << std::setprecision(4) << QNeg << "\t";
+            }
+            if(l == 0){
+              Q_L = -std::numeric_limits<double>::infinity();
+            }
 
+            // if(prior.cens[i]){
+            //   params.llvec[i] = log(1.0 - dat.taugrid[d.mid - l]);
+            // } else {
+            //   if(l == d.mid)
+            //     params.llvec[i] = lf0tail(Q0tail(dat.taugrid[1]) + (params.resLin[i] + params.QNeg)/params.sigma) - log(params.sigma);
+            //   else
+            //     params.llvec[i] = log(dat.taugrid[d.mid-l+1]-dat.taugrid[d.mid-l]) - log(params.QNeg - params.QNegold);
+            // }
+            //Rcout << "ll=" << std::setprecision(4) << llvec[i] << std::endl;
+            //Rcout << "y_" << i << "; l= " << l << "; Q_L= " << Q_L << std::endl;
+          }
+          //Rcout << "b " << std::endl;
+          if(Q_L == -std::numeric_limits<double>::infinity() || Q_U == std::numeric_limits<double>::infinity()){
+            llvec[i] = -std::numeric_limits<double>::infinity();
+          }
+          else{
+            alpha = (y_i - Q_L) / (Q_U - Q_L);
+            llvec[i] = -1*log((1-alpha)*b0dot[l-1]*(1+aTilde.at(i,l-1)) + alpha*b0dot[l]*(1+aTilde.at(i,l)));
+          }
+          //if(llvec[i] == -std::numeric_limits<double>::infinity())
+          //Rprintf("i = %d, ll[i] = %g, resLin[i] = %g, l = %d\n", i, llvec[i], resLin[i], l);
+
+        }
+        //Rcout << "sigma = " << sigma << std::endl;
       }
-      //Rcout << "sigma = " << sigma << std::endl;
+    } else{
+      for(i = 0; i < n; i++) llvec[i] = 0.0;
     }
-  } else{
-    for(i = 0; i < n; i++) llvec[i] = 0.0;
+
+    lp = temp * arma::accu(llvec);
+
+    lp = 0;
+    for(i = 0; i < n; i++){
+      lp += llvec[i];
+    }
+
+    if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
+
+    if(!llonly){
+      lp += lps0 + R::dlogis(nu, 0.0, 1.0, 1);
+    }
   }
-
-  lp = temp * arma::accu(llvec);
-
-  lp = 0;
-  for(i = 0; i < n; i++){
-    lp += llvec[i];
-  }
-
-  if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
-
-  if(!llonly){
-    lp += lps0 + R::dlogis(nu, 0.0, 1.0, 1);
-  }
-
   return lp;
 }
-*/
 
 /*
 double dbase_joint_scl(double b, vec &gam){
