@@ -40,7 +40,7 @@ void   adMCMC(void);
 void   trape(double *x, double *h, int length, double *integral);
 double logPosterior(const vec &, bool llonly);
 
-double dGaussCopula(const vec &, const mat &, bool);
+double log_dGaussCopula(const mat &, const mat &);
 
 SEXP corr_qr_fit(SEXP par_,
                  SEXP x_,
@@ -62,8 +62,6 @@ SEXP corr_qr_fit(SEXP par_,
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
                       List A, List R, List muV, List SV,
                       IntegerVector blocks_, IntegerVector bSize);
-
-int e;
 
 /**** Global variables ****/
 // Data
@@ -131,6 +129,7 @@ cube vMat;    // each col corresponds to W_j(zeta(tau)) (L x p x q) for all resp
 mat Rcorr;    // correlation matrix for Gaussian copula
 
 // Intermediate calculations
+mat tau_y_x;  // matrix of quantiles for y_{ij} | x_i (n x q)
 mat wgrid;    // temp to store A_g * low rank w knots for each g
 mat a;        // = (x*vMat) (n x L)
 vec aX;       // = (L x 1)
@@ -198,8 +197,6 @@ SEXP corr_qr_fit(SEXP par_,
   ldRgrid = vec(LOGDET.begin(), LOGDET.size(), TRUE);
   lpgrid  = vec(LPGRID.begin(), LPGRID.size(), TRUE);
 
-  e = 0;
-
   // Dimensions
   n     = DIM[0];
   p     = DIM[1];
@@ -244,6 +241,7 @@ SEXP corr_qr_fit(SEXP par_,
   Rcorr    = mat(q, q, fill::eye);
 
   // Intermediate calculations
+  tau_y_x  = mat(n, q, fill::zeros);
   wgrid    = mat(L, G, fill::zeros);
   a        = mat(n, L, fill::zeros);
   aX       = vec(L, fill::zeros);
@@ -268,9 +266,9 @@ SEXP corr_qr_fit(SEXP par_,
   acceptSample = mat(nsamp, nblocks, fill::zeros);  // stored MH acceptance history
   parStore     = mat(npar, nsamp, fill::zeros);     // stored posterior draws npar x nsamp
 
-  unsigned int reach = 0;
-  for(unsigned int i = 0; i < (q-1); i++){
-    for(unsigned int j = i+1; j < q; j++){
+  int reach = 0;
+  for(int i = 0; i < (q-1); i++){
+    for(int j = i+1; j < q; j++){
       Rcorr.at(i,j) = parSample(q*npar + reach);
       reach++;
     }
@@ -280,10 +278,13 @@ SEXP corr_qr_fit(SEXP par_,
   /********* TEST CODE *******/
   Rcorr.print("R correlation matrix");
 
-  parSample.t().print("parSample");
+  //parSample.t().print("parSample");
 
   double junk = logPosterior(parSample, false);
   //llmat.print("llmat");
+  tau_y_x.print("tau_y_x");
+  Rcout << "log copula pdf = " << log_dGaussCopula(tau_y_x, Rcorr) << std::endl;
+
   Rcout << "junk = " << junk << std::endl;
 
   /*
@@ -403,24 +404,22 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   return;
 }
 
-double dGaussCopula(const vec &u, const mat &Rc, bool lg){
-  // Note no checks that u contains values in [0,1]
-  int i;
-  int p = u.size();
+double log_dGaussCopula(const mat &U, const mat &Rc){
+  // Note no checks that U contains values in [0,1]
+  int i, j;
   double d = det(Rc);
+  double result = 0;
 
-  vec phi_inv_u = vec(p);
+  vec phi_inv_u = vec(q);
 
-  for(i = 0; i < p; i++){
-    phi_inv_u[i] = R::qnorm(u[i], 0, 1, 1, 0);
+  for(i = 0; i < n; i++){
+    for(j = 0; j < q; j++){
+      phi_inv_u[j] = R::qnorm(U.at(i,j), 0, 1, 1, 0);
+    }
+    result += -0.5 * (log(d) + as_scalar(phi_inv_u.t() * (Rc.i() - eye(q,q)) * phi_inv_u));
   }
 
-  if(lg == true){
-    return -0.5 * (log(d) + as_scalar(phi_inv_u.t() * (Rc.i() - eye(p,p)) * phi_inv_u));
-  }
-  else{
-    return pow(d, -0.5) * exp(-0.5 * as_scalar(phi_inv_u.t() * (Rc.i() - eye(p,p)) * phi_inv_u));
-  }
+  return result;
 }
 
 double ppFn0(const vec &par, int resp){
@@ -535,7 +534,7 @@ double logPosterior(const vec &par, bool llonly){
   int i, j, k, l;
 
   const int par_position = (p+1)*m, gam_pos_offset = p - 1;
-  double zeta0tot, lps0;
+  double zeta0tot, lps0 = 0;
   double Q0;
   double Q_L = -std::numeric_limits<double>::infinity();
   double Q_U =  std::numeric_limits<double>::infinity();
@@ -547,9 +546,6 @@ double logPosterior(const vec &par, bool llonly){
   double t_l, t_u, w_l, w_u;
 
   const double shrinkFactor = 1.0;
-
-  e = 0;
-  Rcout << e++ << std::endl;
 
   // Initialize log-likelihood matrix
   llmat.fill(0);
@@ -566,7 +562,6 @@ double logPosterior(const vec &par, bool llonly){
     lps0 = ppFn0(par, k);
     for(j = 1; j <= p; j++){
       lps0 += ppFn(par, j, k);
-      Rcout << e++ << std::endl;
     }
 
     // w0.print("w0");
@@ -656,6 +651,7 @@ double logPosterior(const vec &par, bool llonly){
          if(y_i == Q0){
            // Y_i exactly equals modeled median, conditional on X_i
            llmat.at(i,k) = -log(b0dot[mid] + dot(x.row(i), bdot.col(mid)));
+           tau_y_x.at(i, k) = taugrid[mid];
          }
          else if(y_i > Q0){
            // Y_i > median
@@ -671,6 +667,7 @@ double logPosterior(const vec &par, bool llonly){
            if(l == L){
              Q_U = std::numeric_limits<double>::infinity();
            }
+           tau_y_x.at(i, k) = taugrid[l];
          }
          else {
            l = mid + 1;
@@ -685,6 +682,7 @@ double logPosterior(const vec &par, bool llonly){
            if(l == 0){
              Q_L = -std::numeric_limits<double>::infinity();
            }
+           tau_y_x.at(i, k) = taugrid[l];
          }
 
          if(Q_L == -std::numeric_limits<double>::infinity() ||
@@ -700,11 +698,13 @@ double logPosterior(const vec &par, bool llonly){
      }
   }
 
-  llmat.print("llmat");
-
+  // Calculate contribution to loglikelihood from marginal distributions for
+  // each response
   lp = arma::accu(llmat);
-
   if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
+
+  // Calculate contribution to loglikelihood from copula distribution
+  lp += log_dGaussCopula(tau_y_x, Rcorr);
 
   if(!llonly){
     lp += lps0 + R::dlogis(nu, 0.0, 1.0, 1);
