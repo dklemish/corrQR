@@ -1,6 +1,7 @@
-corrQR <- function(x, y, sd, nsamp = 1e3, thin = 10,
+corrQR <- function(x, y, sd, Rcorr,
+                   nsamp = 1e3, thin = 10,
                    incr = 0.01, initPar = "prior",
-                   copula = "gaussian",
+                   #copula = "gaussian",
                    nknots = 6,
                    hyper = list(sig = c(.1,.1),
                                 lam = c(6,4),
@@ -9,11 +10,14 @@ corrQR <- function(x, y, sd, nsamp = 1e3, thin = 10,
                    acpt.target = 0.15,
                    ref.size = 3,
                    blocking = "by.response",
-                   temp = 1, expo = 2,
-                   blocks.mu, blocks.S, fix.nu = FALSE){
+                   expo = 2,
+                   blocks.mu, blocks.S,
+                   fix.nu = FALSE, fix.corr = TRUE){
   # Input parameters:
   #  x - Predictors (n by p matrix)
   #  y - Response (n by q matrix)
+  #  sd - Random seed
+  #  Rcorr - User provided correlation matrix for Gaussian copula
   #  nsamp - number of MCMC samples
   #  thin - thinning factor
   #  incr - increment in quantile grid tau to be analyzed
@@ -35,6 +39,8 @@ corrQR <- function(x, y, sd, nsamp = 1e3, thin = 10,
   # blocks.mu -
   # blocks.s -
   # fix.nu - option on whether nu parameter should be included in MCMC
+  # fix.corr - option on whether correlation matrix for Gaussian copula should
+  #   be learned.
 
   #### Read in data ####
   x <- as.matrix(x)
@@ -272,6 +278,7 @@ corrQR <- function(x, y, sd, nsamp = 1e3, thin = 10,
   blocks.ix <- c(unlist(lapply(blocks, which))) - 1
   blocks.size <- sapply(blocks, sum)
 
+  # Initialize prior mean & covariances for proposal distributions
   if(missing(blocks.mu)){
     blocks.mu <- lapply(blocks.size, function(n) vector("numeric", n))
   }
@@ -349,12 +356,22 @@ corrQR <- function(x, y, sd, nsamp = 1e3, thin = 10,
 
       blocks.S[[p+4]] <- as.matrix(bdiag(slist))
     }
+  }
 
-    #blocks.S <- unlist(blocks.S)
+  # Initialize correlation paramters for Gaussian copula
+  if(!missing(Rcorr)){
+    reach <- 1
+
+    for(i in 1:(q-1)){
+      for(j in (i+1):q){
+        par[q*npar + reach] <- Rcorr[i,j]
+        reach <- reach + 1
+      }
+    }
   }
 
   imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks))
-  dmcmc.par <- c(temp, 0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
+  dmcmc.par <- c(0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
 
   set.seed(sd)
 

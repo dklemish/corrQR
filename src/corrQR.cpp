@@ -220,11 +220,11 @@ SEXP corr_qr_fit(SEXP par_,
   refresh = IMCMCPAR[1];
   verbose = (bool) IMCMCPAR[2];
   ticker  = IMCMCPAR[3];
-  decay   = DMCMCPAR[1];
+  decay   = DMCMCPAR[0];
 
   refresh_counter = ivec(IMCMCPAR.begin() + 4, nblocks, TRUE);
-  acpt_target     =  vec(DMCMCPAR.begin() + 2, nblocks, TRUE);
-  lm              =  vec(DMCMCPAR.begin() + 2 + nblocks, nblocks, TRUE);
+  acpt_target     =  vec(DMCMCPAR.begin() + 1, nblocks, TRUE);
+  lm              =  vec(DMCMCPAR.begin() + 1 + nblocks, nblocks, TRUE);
 
   // Prior parameters
   Init_Prior_Param(L, m, G, nblocks, nkap, HYP, A, R, MU_V, SV, BLOCKS, BLOCKS_SIZE);
@@ -268,10 +268,16 @@ SEXP corr_qr_fit(SEXP par_,
   acceptSample = mat(nsamp, nblocks, fill::zeros);  // stored MH acceptance history
   parStore     = mat(npar, nsamp, fill::zeros);     // stored posterior draws npar x nsamp
 
-  /********* TEST CODE *******/
-
-  Rcorr.at(0,1) = parSample(q*npar);
+  unsigned int reach = 0;
+  for(unsigned int i = 0; i < (q-1); i++){
+    for(unsigned int j = i+1; j < q; j++){
+      Rcorr.at(i,j) = parSample(q*npar + reach);
+      reach++;
+    }
+  }
   Rcorr = symmatu(Rcorr);
+
+  /********* TEST CODE *******/
   Rcorr.print("R correlation matrix");
 
   parSample.t().print("parSample");
