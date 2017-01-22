@@ -12,7 +12,8 @@ corrQR <- function(x, y, sd, Rcorr,
                    blocking = "by.response",
                    expo = 2,
                    blocks.mu, blocks.S,
-                   fix.nu = FALSE, fix.corr = TRUE){
+                   fix.nu = FALSE, fix.corr = TRUE,
+                   adapt = FALSE){
   # Input parameters:
   #  x - Predictors (n by p matrix)
   #  y - Response (n by q matrix)
@@ -207,6 +208,8 @@ corrQR <- function(x, y, sd, Rcorr,
 
   par <- rep(0, tot.par)
 
+  set.seed(sd)
+
   # Initialize w functions, gamma0, gamma, sigma & nu
   for(j in 1:q){
     suppressWarnings(
@@ -220,9 +223,9 @@ corrQR <- function(x, y, sd, Rcorr,
   # Build list that contains which indices of parameter vector
   # should be updated in each block update in each MCMC iteration
   if(blocking == "single"){
-    blocks <- list(rep(TRUE, tot.par))
+    blocks <- list(rep(TRUE, tot.par - ncorr))
   } else if(blocking == "by.response"){
-    blocks <- replicate(q*(p + 3) + 1, rep(FALSE, tot.par), simplify = FALSE)
+    blocks <- replicate(q*(p + 3) + 1, rep(FALSE, tot.par - ncorr), simplify = FALSE)
 
     for(j in 1:q){
       # Parameters for w & gamma functions for one response variable in separate blocks
@@ -260,8 +263,8 @@ corrQR <- function(x, y, sd, Rcorr,
     # in a different manner)
     blocks[[p+4]][1:(q*npar)] <- TRUE
   } else {
-    # Sample each paramater separately
-    blocks <- replicate(q*npar, rep(FALSE, q*npar + ncorr), simplify = FALSE)
+    # Sample each parameter separately
+    blocks <- replicate(q*npar, rep(FALSE, q*npar), simplify = FALSE)
     for(i in 1:(q*npar)) blocks[[i]][i] <- TRUE
   }
 
@@ -303,7 +306,7 @@ corrQR <- function(x, y, sd, Rcorr,
 
       # Determine prior joint covariance matrix of all blocks
       slist <- list()
-      length(slist) <- q*(p+3) + 1
+      length(slist) <- q*(p+3)
       for(i in 1:q){
         for(j in 1:(p+1)){
           slist[[(i-1)*(p+3) + j]] <- K0
@@ -315,7 +318,6 @@ corrQR <- function(x, y, sd, Rcorr,
           )
         slist[[i*(p+3)]] <- matrix(c(1,0,0,0.1), nrow=2, ncol=2)
       }
-      slist[[q*(p+3) + 1]] <- 0.1
 
       blocks.S[[q*(p+3) + 1]] <- as.matrix(bdiag(slist))
     } else if(blocking == "by.function"){
@@ -338,7 +340,7 @@ corrQR <- function(x, y, sd, Rcorr,
 
       # Determine prior joint covariance matrix of all variables
       slist <- list()
-      length(slist) <- q*(p+3) + 1
+      length(slist) <- p+3
 
       for(i in 1:q){
         for(j in 1:(p+1)){
@@ -352,7 +354,6 @@ corrQR <- function(x, y, sd, Rcorr,
 
         slist[[i*(p+3)]] <- matrix(c(1,0,0,0.1), nrow=2, ncol=2)
       }
-      slist[[q*(p+3) + 1]] <- 0.1
 
       blocks.S[[p+4]] <- as.matrix(bdiag(slist))
     }
@@ -370,16 +371,29 @@ corrQR <- function(x, y, sd, Rcorr,
     }
   }
 
-  imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks))
+  imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks), adapt, fix.corr)
   dmcmc.par <- c(0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
 
-  set.seed(sd)
+  tm.cpp <- system.time(
+    oo <- .Call('corrQR_corr_qr_fit', PACKAGE='corrQR',
+                par, x, y, hyperPar, dimpars, A, R,
+                log.det, lp.grid, tau.g,
+                blocks.mu, blocks.S,
+                blocks.ix, blocks.size, dmcmc.par, imcmc.par)
+  )
+  set.seed(NULL)
 
-  .Call('corrQR_corr_qr_fit', PACKAGE='corrQR',
-        par, x, y, hyperPar, dimpars, A, R,
-        log.det, lp.grid, tau.g,
-        blocks.mu, blocks.S,
-        blocks.ix, blocks.size, dmcmc.par, imcmc.par)
+  oo$x <- x
+  oo$y <- y
+  oo$tau.g <- tau.g
+  oo$xnames <- x.names
+  oo$ynames <- y.names
+  oo$prox <- prox.grid
+  oo$reg.ix <- reg.ix
+  oo$runtime <- tm.cpp[3]
+
+  class(oo) <- "corrQR"
+  return(oo)
 
   # tm.c <- system.time(
   #   oo <- .C("BJQR",
