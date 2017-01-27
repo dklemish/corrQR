@@ -157,7 +157,7 @@ mat wgrid;    // temp to store A_g * low rank w knots for each g
 mat a;        // = (x*vMat) (n x L)
 vec aX;       // = (L x 1)
 // mat aTilde;   // = (n x L)
-mat vTilde;   // = (p x L)
+mat vTilde;   // = (L x p)
 vec b0dot;    // (L x 1)
 mat bdot;     // = x^T %*% beta.dot(tau) (p x L)
 vec vNormSq;
@@ -277,7 +277,7 @@ SEXP corr_qr_fit(SEXP par_,
   a        = mat(n, L, fill::zeros);
   aX       = vec(L, fill::zeros);
   // aTilde   = mat(n, L, fill::zeros);
-  vTilde   = mat(p, L, fill::zeros);
+  vTilde   = mat(L, p, fill::zeros);
   b0dot    = vec(L, fill::zeros);
   bdot     = mat(p, L, fill::zeros);
   vNormSq  = vec(L, fill::zeros);
@@ -629,13 +629,13 @@ double logPosterior(const vec &par, bool llonly){
 
     //wMat.slice(k).print("wMat");
     //zeta0.print("zeta0");
-    vMat.slice(k).print("vMat");
+    //vMat.slice(k).print("vMat");
 
     //** 5. ||v_l||^2 for each quantile l (1:L)
     for(l = 0; l < L; l++)
       vNormSq[l] = pow(norm(vMat.slice(k).row(l)),2);
 
-    vNormSq.print("vNormSq");
+    //vNormSq.print("vNormSq");
 
     if(vNormSq.min() > 0.0){
       //** 5. a_i for each observation i & quantile l
@@ -645,72 +645,70 @@ double logPosterior(const vec &par, bool llonly){
       for(l = 0; l < L; l++){
         aX[l] = -a.col(l).min() / sqrt(vNormSq[l]);
         for(i = 0; i < p; i++){
-          vTilde.at(i,l) = vMat.at(i,l,k) / (aX[l]*sqrt(1+vNormSq[l]));
+          vTilde.at(l,i) = vMat.at(l,i,k) / (aX[l]*sqrt(1+vNormSq[l]));
         }
       }
 
-      a.print("a");
-      aX.print("aX");
-      vTilde.t().print("vTilde");
+      // a.print("a");
+      // aX.print("aX");
+      // vTilde.t().print("vTilde");
 
-      /*
-       // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
-       // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
-       // for each observation i
-       //** 7. Calculate log-likelihood by sequencing through observations
-        for(i = 0; i < n; i++){
+      // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
+      // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
+      // for each observation i
+      //** 7. Calculate log-likelihood by sequencing through observations
+      for(i = 0; i < n; i++){
         Q0_val = gam0 + dot(x.row(i), gam);
 
         y_i = y.at(i,k);
 
         if(y_i == Q0_val){
-        // Y_i exactly equals modeled median, conditional on X_i
-        llmat.at(i,k) = -log(b0dot[mid] + dot(x.row(i), bdot.col(mid)));
-        tau_y_x.at(i, k) = taugrid[mid];
+          // Y_i exactly equals modeled median, conditional on X_i
+          llmat.at(i,k) = -log(b0dot[mid] + dot(x.row(i), bdot.col(mid)));
+          tau_y_x.at(i, k) = taugrid[mid];
         }
         else if(y_i > Q0_val){
-        // Y_i > median
-        Q_U = Q0_val;
-        l = mid;
+          // Y_i > median
+          Q_U = Q0_val;
+          l = mid;
 
-        while(y_i > Q_U && l < L-1){
-        Q_L = Q_U;
-        Q_U = Q_L + 0.5*(taugrid[l]-taugrid[l-1]) *
-        (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
-        l++;
-        }
-        if(l == L){
-        Q_U = std::numeric_limits<double>::infinity();
-        }
-        tau_y_x.at(i, k) = taugrid[l];
+          while(y_i > Q_U && l < L-1){
+            Q_L = Q_U;
+            Q_U = Q_L + 0.5*(taugrid[l]-taugrid[l-1]) *
+              (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+            l++;
+          }
+          if(l == L){
+            Q_U = std::numeric_limits<double>::infinity();
+          }
+          tau_y_x.at(i, k) = taugrid[l];
         }
         else {
-        l = mid + 1;
-        Q_L = Q0_val;
+          l = mid + 1;
+          Q_L = Q0_val;
 
-        while(y_i < Q_L && l > 0){
-        Q_U = Q_L;
-        Q_L = Q_U - 0.5*(taugrid[l]-taugrid[l-1]) *
-        (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
-        l--;
-        }
-        if(l == 0){
-        Q_L = -std::numeric_limits<double>::infinity();
-        }
-        tau_y_x.at(i, k) = taugrid[l];
+          while(y_i < Q_L && l > 0){
+            Q_U = Q_L;
+            Q_L = Q_U - 0.5*(taugrid[l]-taugrid[l-1]) *
+              (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+            l--;
+          }
+          if(l == 0){
+            Q_L = -std::numeric_limits<double>::infinity();
+          }
+          tau_y_x.at(i, k) = taugrid[l];
         }
 
         if(Q_L == -std::numeric_limits<double>::infinity() ||
-        Q_U == std::numeric_limits<double>::infinity()){
-        llmat.at(i,k) = -std::numeric_limits<double>::infinity();
+           Q_U == std::numeric_limits<double>::infinity()){
+          llmat.at(i,k) = -std::numeric_limits<double>::infinity();
         }
         else{
-        alp = (y_i - Q_L) / (Q_U - Q_L);
-        llmat.at(i,k) += -1*log((1-alp)*b0dot[l-1]*(1+aTilde.at(i,l-1)) +
-        alp*b0dot[l] * (1+aTilde.at(i,l)));
+          alp = (y_i - Q_L) / (Q_U - Q_L);
+          llmat.at(i,k) += -1*log((1-alp)*b0dot[l-1]*(1+aTilde.at(i,l-1)) +
+            alp*b0dot[l] * (1+aTilde.at(i,l)));
         }
-        }
-        */
+      }
     }
   }
 
