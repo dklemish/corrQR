@@ -1,6 +1,8 @@
 corrQR <- function(x, y, sd, Rcorr,
                    nsamp = 1e3, thin = 10,
-                   incr = 0.01, initPar = "prior",
+                   incr = 0.01,
+                   #initPar = "prior",
+                   ip,
                    #copula = "gaussian",
                    nknots = 6,
                    hyper = list(sig = c(.1,.1),
@@ -139,7 +141,6 @@ corrQR <- function(x, y, sd, Rcorr,
   d.kg <- abs(outer(tau.k, tau.g, "-"))^expo
   d.kk <- abs(outer(tau.k, tau.k, "-"))^expo
 
-  #gridmats <- matrix(NA, nknots*(L + nknots)+2, ngrid)
   A <- list()
   R <- list()
   log.det <- rep(0, ngrid)
@@ -154,19 +155,13 @@ corrQR <- function(x, y, sd, Rcorr,
     K.knot <- exp(-lamsq.grid[i] * d.kk)
     diag(K.knot) <- 1 + 1e-10   # for numerical stability
 
-    # R.knot, A.knot = R_g, A_g from paper
-    #R.knot <- chol(K.knot)
-    #A.knot <- solve(K.knot, K.grid)
     R[[i]] <- chol(K.knot)
     A[[i]] <- t(solve(K.knot, K.grid))
     log.det[i] <- sum(log(diag(R[[i]])))
 
-    #gridmats[,i] <- c(c(A.knot), c(R.knot), sum(log(diag(R.knot))), lp.grid[i])
-
     K0 <- K0 + prior.grid[i] * K.knot
   }
   t2 <- Sys.time()
-  cat("Matrix calculation time per 1e3 iterations =", round(1e3 * as.numeric(t2 - t1), 2), "\n")
 
   # npar  = number of parameters for each response variable
   # niter = number of MCMC iterations
@@ -211,14 +206,18 @@ corrQR <- function(x, y, sd, Rcorr,
   set.seed(sd)
 
   # Initialize w functions, gamma0, gamma, sigma & nu
-  for(j in 1:q){
-    suppressWarnings(
-      invis <- capture.output(
-        par[(j-1)*npar + 1:npar] <-
-          qrjoint(x, y[,j], nsamp = 100, thin=1)$par
-      )
-    )
-  }
+  # if(initPar == "prior"){
+  #   for(j in 1:q){
+  #     suppressWarnings(
+  #       invis <- capture.output(
+  #         par[(j-1)*npar + 1:npar] <-
+  #           qrjoint(x, y[,j], nsamp = 100, thin=1)$par
+  #       )
+  #     )
+  #   }
+  # }else if(initPar == "user"){
+  par <- ip
+  # }
 
   # Build list that contains which indices of parameter vector
   # should be updated in each block update in each MCMC iteration
@@ -394,39 +393,6 @@ corrQR <- function(x, y, sd, Rcorr,
 
   class(oo) <- "corrQR"
   return(oo)
-
-  # tm.c <- system.time(
-  #   oo <- .C("BJQR",
-  #            par      = as.double(par),
-  #            x        = as.double(x),
-  #            y        = as.double(y),
-  #            hyper    = as.double(hyperPar),
-  #            dim      = as.integer(dimpars),
-  #            gridmats = as.double(gridmats),
-  #            tau.g    = as.double(tau.g),
-  #            muV      = as.double(blocks.mu),
-  #            SV       = as.double(blocks.S),
-  #            blocks   = as.integer(blocks.ix),
-  #            blocks.size = as.integer(blocks.size),
-  #            dmcmcpar = as.double(dmcmc.par),
-  #            imcmcpar = as.integer(imcmc.par),
-  #            parsamp  = double(nsamp * length(par)),
-  #            acptsamp = double(nsamp * nblocks),
-  #            lpsamp   = double(nsamp))
-  # )
-  # cat("elapsed time:", round(tm.c[3]), "seconds\n")
-  #
-  # oo$x <- x
-  # oo$y <- y
-  # oo$xnames <- x.names
-  # oo$ynames <- y.names
-  # oo$gridmats <- gridmats
-  # oo$prox <- prox.grid
-  # oo$reg.ix <- reg.ix
-  # oo$runtime <- tm.c[3]
-  #
-  # class(oo) <- "qrjoint"
-  # return(oo)
 }
 
 waic <- function(logliks, print = TRUE){
