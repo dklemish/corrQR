@@ -37,6 +37,7 @@ double ppFn(const vec &, int, int);
 double logsum(const vec &);
 double logmean(const vec &);
 void   trape(double *x, double *h, int length, double *integral);
+void   trapeReverse(double *x, double *h, int length, double *integral);
 double logPosterior(const vec &, bool llonly);
 
 double log_dGaussCopula(const mat &, const mat &);
@@ -70,7 +71,7 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
 // int par_position = (p+1)*m, gam_pos_offset = p - 1;
 int par_position;
 int gam_pos_offset;
-double zeta0tot, lps0 = 0;
+double zeta0tot;
 double Q0_val;
 double Q_L; // = -std::numeric_limits<double>::infinity();
 double Q_U; // =  std::numeric_limits<double>::infinity();
@@ -156,17 +157,24 @@ mat tau_y_x;  // matrix of quantiles for y_{ij} | x_i (n x q)
 mat wgrid;    // temp to store A_g * low rank w knots for each g
 mat a;        // = (x*vMat) (n x L)
 vec aX;       // = (L x 1)
-// mat aTilde;   // = (n x L)
+mat aTilde;   // = (n x L)
 mat vTilde;   // = (L x p)
 vec b0dot;    // (L x 1)
-mat bdot;     // = x^T %*% beta.dot(tau) (p x L)
+mat bdot;     // = x^T %*% beta.dot(tau) (L x p)
+vec Q0_med;   // (n x 1)
 vec vNormSq;
 vec wknot;    // (m x 1)
 vec zknot;    // (m x 1)
 mat llmat;    // log-likelihood by obs (n x q)
 vec llgrid;   // MV t-dist contrib to loglikelihood (G x 1)
-ivec zeta0_tick; // (L x 1)
-vec  zeta0_dist; // (L x 1)
+
+vec lps0;     // (q x 1)
+vec resLin;   // (n x 1)
+vec Q0Pos;    // (L x 1)
+vec Q0Neg;    // (L x 1)
+mat bPos;     // (L x p)
+mat bNeg;     // (L x p)
+double QPos, QPosold, QNeg, QNegold;
 
 cube pgvec;   // contains p_g(W_j*) (G x (p+1) x q)
 vec lb;       // used for shrinkage prior on gamma vector (10 x 1)
@@ -276,18 +284,23 @@ SEXP corr_qr_fit(SEXP par_,
   wgrid    = mat(L, G, fill::zeros);
   a        = mat(n, L, fill::zeros);
   aX       = vec(L, fill::zeros);
-  // aTilde   = mat(n, L, fill::zeros);
+  aTilde   = mat(n, L, fill::zeros);
   vTilde   = mat(L, p, fill::zeros);
   b0dot    = vec(L, fill::zeros);
-  bdot     = mat(p, L, fill::zeros);
+  bdot     = mat(L, p, fill::zeros);
+  Q0_med   = vec(n, fill::zeros);
   vNormSq  = vec(L, fill::zeros);
   wknot    = vec(m, fill::zeros);
   zknot    = vec(m, fill::zeros);
   llmat    = mat(n, q, fill::zeros);
   llgrid   = vec(G, fill::zeros);
 
-  zeta0_tick = ivec(L, fill::zeros);
-  zeta0_dist = vec(L, fill::zeros);
+  lps0     = vec(q, fill::zeros);
+  resLin   = vec(n, fill::zeros);
+  Q0Pos    = vec(L, fill::zeros);
+  Q0Neg    = vec(L, fill::zeros);
+  bPos     = mat(L, p, fill::zeros);
+  bNeg     = mat(L, p, fill::zeros);
 
   pgvec    = cube(G, p+1, q, fill::zeros);
   lb       = vec(10, fill::zeros);
@@ -317,10 +330,6 @@ SEXP corr_qr_fit(SEXP par_,
   //double junk = ppFn(parSample, 1, 0);
 
   double junk = logPosterior(parSample, false);
-  llmat.print("llmat");
-  tau_y_x.print("tau_y_x");
-  Rcout << "log copula pdf = " << log_dGaussCopula(tau_y_x, Rcorr) << std::endl;
-  Rcout << "initial logPosterior = " << junk << std::endl;
 
   //
   // vec U = vec(2); U[0] = 0.8; U[1] = 0.9;
@@ -548,6 +557,20 @@ void trape(double *x, double *h, int length, double *integral){
   return;
 }
 
+void trapeReverse(double *x, double *h, int length, double *integral){
+  // Calculates integral of function x over domain h via trapezoidal rule
+  int j = 0;
+  integral[0] = 0.0;
+
+  for(int i = 1; i < length; i++){
+    integral[i] = integral[i-1] + 0.5 * (h[j] - h[j-1]) * (x[j] + x[j-1]);
+    j--;
+  }
+
+  return;
+}
+
+
 double sigFn(double z) {
   return exp(z/2.0);
 }
@@ -564,7 +587,7 @@ double nuFn_inv(double nu) {
   return 2.0*log((nu - 0.5)/5.5);
 }
 
-double logPosterior(const vec &par, bool llonly){
+double logPosteriorTest(const vec &par, bool llonly){
   int i, j, k, l;
 
   // Initialize log-likelihood matrix
@@ -582,7 +605,7 @@ double logPosterior(const vec &par, bool llonly){
     // Calculate basic quantities
 
     //** 1. Determine vector w_0 based on interpolation at specified knots
-    lps0 = ppFn0(par, k);
+    lps0[k] = ppFn0(par, k);
 
     //** 2. zeta & zeta.dot
     w0max    = w0.col(k).max();
@@ -605,8 +628,10 @@ double logPosterior(const vec &par, bool llonly){
     b0dot = sigma * q0(zeta0, nu) % zeta0dot;
 
     for(j = 1; j <= p; j++){
-      lps0 += ppFn(par, j, k);
+      lps0[k] += ppFn(par, j, k);
     }
+    lps0[k] += R::dlogis(par[k*npar + par_position + gam_pos_offset + 3], 0.0, 1.0, 1);
+
 
     //** 4. Calculate matrix of w_j functions at each l based on interpolating between knots.
     //       Then find v matrix = w(zeta(tau)) for each l, via linear interpolation
@@ -627,15 +652,9 @@ double logPosterior(const vec &par, bool llonly){
       vMat.at(L-1,j,k) = wMat.at(L-1,j,k);
     }
 
-    //wMat.slice(k).print("wMat");
-    //zeta0.print("zeta0");
-    //vMat.slice(k).print("vMat");
-
     //** 5. ||v_l||^2 for each quantile l (1:L)
     for(l = 0; l < L; l++)
       vNormSq[l] = pow(norm(vMat.slice(k).row(l)),2);
-
-    //vNormSq.print("vNormSq");
 
     if(vNormSq.min() > 0.0){
       //** 5. a_i for each observation i & quantile l
@@ -646,67 +665,67 @@ double logPosterior(const vec &par, bool llonly){
         aX[l] = -a.col(l).min() / sqrt(vNormSq[l]);
         for(i = 0; i < p; i++){
           vTilde.at(l,i) = vMat.at(l,i,k) / (aX[l]*sqrt(1+vNormSq[l]));
+          aTilde.at(i,l) = a.at(i,l) / (aX[l]*sqrt(1+vNormSq[l]));
         }
       }
 
-      // a.print("a");
-      // aX.print("aX");
-      // vTilde.t().print("vTilde");
+      for(i = 0; i < p; i++){
+        bdot.col(i) = b0dot % vTilde.col(i);
+      }
+
+      trape(b0dot.memptr() + mid, taugrid.memptr() + mid, L - mid, Q0Pos.memptr());
+      Q0Pos[L-mid] = std::numeric_limits<double>::infinity();
+      trapeReverse(b0dot.memptr() + mid, taugrid.memptr() + mid, mid + 1, Q0Neg.memptr());
+      Q0Neg[mid+1] = std::numeric_limits<double>::infinity();
+
+      for(i = 0; i < p; i++){
+        trape(bdot.memptr() + L*i + mid, taugrid.memptr() + mid, L - mid, bPos.memptr() + L*i);
+        trapeReverse(bdot.memptr() + L*i + mid, taugrid.memptr() + mid, mid + 1, bNeg.memptr() + L*i);
+      }
 
       // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
       // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
-      // for each observation i
+      // for each observation i, and "residual" of y_i compared to that median
+      Q0_med = vec(n).fill(gam0) + x*gam;
+      resLin = y.col(k) - Q0_med;
+
       //** 7. Calculate log-likelihood by sequencing through observations
       for(i = 0; i < n; i++){
-        Q0_val = gam0 + dot(x.row(i), gam);
+        if(resLin[i] == 0.0){
+          llmat.at(i,k) = -log(b0dot[mid] + as_scalar(x.row(i) * bdot.row(mid).t()));
+          tau_y_x.at(i,k) = taugrid[mid];
 
-        y_i = y.at(i,k);
-
-        if(y_i == Q0_val){
-          // Y_i exactly equals modeled median, conditional on X_i
-          llmat.at(i,k) = -log(b0dot[mid] + dot(x.row(i), bdot.col(mid)));
-          tau_y_x.at(i, k) = taugrid[mid];
-        }
-        else if(y_i > Q0_val){
-          // Y_i > median
-          Q_U = Q0_val;
-          l = mid;
-
-          while(y_i > Q_U && l < L-1){
-            Q_L = Q_U;
-            Q_U = Q_L + 0.5*(taugrid[l]-taugrid[l-1]) *
-              (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+        } else if(resLin[i] > 0.0){
+          l = 0;
+          QPosold = 0.0;
+          QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
+          while(resLin[i] > QPos && l < L-mid-1){
+            QPosold = QPos;
             l++;
+            QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
           }
-          if(l == L){
-            Q_U = std::numeric_limits<double>::infinity();
-          }
-          tau_y_x.at(i, k) = taugrid[l];
-        }
-        else {
-          l = mid + 1;
-          Q_L = Q0_val;
+          tau_y_x.at(i,k) = taugrid[mid + l];
 
-          while(y_i < Q_L && l > 0){
-            Q_U = Q_L;
-            Q_L = Q_U - 0.5*(taugrid[l]-taugrid[l-1]) *
-              (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
-            l--;
-          }
-          if(l == 0){
-            Q_L = -std::numeric_limits<double>::infinity();
-          }
-          tau_y_x.at(i, k) = taugrid[l];
-        }
+          if(l == L - mid - 1)
+            llmat.at(i,k) = lf0tail(Q0tail(taugrid[L-2]) + (resLin[i] - QPos)/sigma) - log(sigma);
+          else
+            llmat.at(i,k) = log(taugrid[mid+l] - taugrid[mid+l-1]) - log(QPos - QPosold);
 
-        if(Q_L == -std::numeric_limits<double>::infinity() ||
-           Q_U == std::numeric_limits<double>::infinity()){
-          llmat.at(i,k) = -std::numeric_limits<double>::infinity();
-        }
-        else{
-          alp = (y_i - Q_L) / (Q_U - Q_L);
-          llmat.at(i,k) += -1*log((1-alp)*b0dot[l-1]*(1+aTilde.at(i,l-1)) +
-            alp*b0dot[l] * (1+aTilde.at(i,l)));
+        } else {
+          l = 0;
+          QNegold = 0.0;
+          QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
+          while(resLin[i] < -QNeg && l < mid){
+            QNegold = QNeg;
+            l++;
+            QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
+          }
+          tau_y_x.at(i,k) = taugrid[mid - l];
+
+          if(l == mid)
+            llmat.at(i,k) = lf0tail(Q0tail(taugrid[1]) + (resLin[i] + QNeg)/sigma) - log(sigma);
+          else
+            llmat.at(i,k) = log(taugrid[mid-l+1]-taugrid[mid-l]) - log(QNeg - QNegold);
         }
       }
     }
@@ -721,7 +740,268 @@ double logPosterior(const vec &par, bool llonly){
   lp += log_dGaussCopula(tau_y_x, Rcorr);
 
   if(!llonly){
-    lp += lps0 + R::dlogis(nu, 0.0, 1.0, 1);
+    lp += accu(lps0);
+  }
+
+  return lp;
+}
+
+double logPosteriorTest(const vec &par, bool llonly){
+  int i, j, k, l;
+
+  // Initialize log-likelihood matrix
+  llmat.fill(0);
+
+  // Loop over response variables
+  for(k = 0; k < q; k++){
+    // Read in current values of parameters
+    gam0 = par[k*npar + par_position];
+    gam  = par.subvec(k*npar + par_position + 1,
+                      k*npar + par_position + gam_pos_offset + 1);
+    sigma = sigFn(par[k*npar + par_position + gam_pos_offset + 2]);
+    nu    = nuFn(par[k*npar + par_position + gam_pos_offset + 3]);
+
+    // Calculate basic quantities
+
+    //** 1. Determine vector w_0 based on interpolation at specified knots
+    lps0[k] = ppFn0(par, k);
+
+    //** 2. zeta & zeta.dot
+    w0max    = w0.col(k).max();
+    zeta0dot = exp(shrinkFactor * (w0.col(k) - w0max));
+
+    // zeta is integral of zeta.dot
+    trape(zeta0dot.memptr() + 1, taugrid.memptr() + 1, L-1, zeta0.memptr() + 1);
+
+    // zeta0[0] = 0, zeta0[1] = 1 by definition
+    // rescale zeta0 so that it lies in [0,1] for tau != 0, 1
+    zeta0tot = zeta0[L-2];
+
+    zeta0[0] = 0.0; zeta0[L-1] = 1.0;
+    zeta0.subvec(1,L-2) = taugrid[1] + (taugrid[L-2] - taugrid[1]) * zeta0.subvec(1,L-2) / zeta0tot;
+
+    zeta0dot[0] = 0.0; zeta0dot[L-1] = 0.0;
+    zeta0dot.subvec(1,L-2) = (taugrid[L-2] - taugrid[1]) * zeta0dot.subvec(1,L-2) / zeta0tot;
+
+    //** 3. beta0.dot for each l (% is element-wise multiplication for Armadillo vectors)
+    b0dot = sigma * q0(zeta0, nu) % zeta0dot;
+
+    for(j = 1; j <= p; j++){
+      lps0[k] += ppFn(par, j, k);
+    }
+    lps0[k] += R::dlogis(par[k*npar + par_position + gam_pos_offset + 3], 0.0, 1.0, 1);
+
+
+    //** 4. Calculate matrix of w_j functions at each l based on interpolating between knots.
+    //       Then find v matrix = w(zeta(tau)) for each l, via linear interpolation
+    // Uses arma as_scalar & find functions
+    for(j = 0; j < p; j++){
+      for(l = 1; l < L-1; l++){
+        lower_ind = as_scalar(find(zeta0[l] >= taugrid, 1, "last"));
+        upper_ind = lower_ind + 1;
+
+        t_l = as_scalar(taugrid[lower_ind]);
+        t_u = as_scalar(taugrid[upper_ind]);
+        w_l = as_scalar(wMat.slice(k).at(lower_ind, j));
+        w_u = as_scalar(wMat.slice(k).at(upper_ind, j));
+
+        vMat.at(l,j,k) = w_l + (zeta0[l]-t_l)*(w_u - w_l)/(t_u - t_l);
+      }
+      vMat.at(0,j,k)   = wMat.at(0,j,k);
+      vMat.at(L-1,j,k) = wMat.at(L-1,j,k);
+    }
+
+    //** 5. ||v_l||^2 for each quantile l (1:L)
+    for(l = 0; l < L; l++)
+      vNormSq[l] = pow(norm(vMat.slice(k).row(l)),2);
+
+    if(vNormSq.min() > 0.0){
+      //** 5. a_i for each observation i & quantile l
+      a = x * vMat.slice(k).t();  // a is n x L
+
+      //** 6. a_chi for each l & tilde{a}_il for each obs i & quant l
+      for(l = 0; l < L; l++){
+        aX[l] = -a.col(l).min() / sqrt(vNormSq[l]);
+        for(i = 0; i < p; i++){
+          vTilde.at(l,i) = vMat.at(l,i,k) / (aX[l]*sqrt(1+vNormSq[l]));
+          aTilde.at(i,l) = a.at(i,l) / (aX[l]*sqrt(1+vNormSq[l]));
+        }
+      }
+
+      for(i = 0; i < p; i++){
+        bdot.col(i) = b0dot % vTilde.col(i);
+      }
+
+      trape(b0dot.memptr() + mid, taugrid.memptr() + mid, L - mid, Q0Pos.memptr());
+      Q0Pos[L-mid] = std::numeric_limits<double>::infinity();
+      trapeReverse(b0dot.memptr() + mid, taugrid.memptr() + mid, mid + 1, Q0Neg.memptr());
+      Q0Neg[mid+1] = std::numeric_limits<double>::infinity();
+
+      for(i = 0; i < p; i++){
+        trape(bdot.memptr() + L*i + mid, taugrid.memptr() + mid, L - mid, bPos.memptr() + L*i);
+        trapeReverse(bdot.memptr() + L*i + mid, taugrid.memptr() + mid, mid + 1, bNeg.memptr() + L*i);
+      }
+
+      Q0_med = vec(n).fill(gam0) + x*gam;
+
+      resLin = y.col(k) - Q0_med;
+
+      // Q0_med.print("Q0_med");
+      // Q0Pos.print("Q0Pos");
+      // Q0Neg.print("Q0Neg");
+      // bPos.print("bPos");
+      // bNeg.print("bNeg");
+
+      // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
+      // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
+      // for each observation i
+      //** 7. Calculate log-likelihood by sequencing through observations
+      for(i = 0; i < n; i++){
+        if(resLin[i] == 0.0){
+          llmat.at(i,k) = -log(b0dot[mid] + as_scalar(x.row(i) * bdot.row(mid).t()));
+
+          // Testing
+          tau_y_x.at(i,k) = taugrid[mid];
+
+        } else if(resLin[i] > 0.0){
+          l = 0;
+          QPosold = 0.0;
+          QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
+          while(resLin[i] > QPos && l < L-mid-1){
+            QPosold = QPos;
+            l++;
+            QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
+          }
+
+          // Testing
+          tau_y_x.at(i,k) = taugrid[mid + l];
+
+          if(l == L - mid - 1)
+            llmat.at(i,k) = lf0tail(Q0tail(taugrid[L-2]) + (resLin[i] - QPos)/sigma) - log(sigma);
+          else
+            llmat.at(i,k) = log(taugrid[mid+l] - taugrid[mid+l-1]) - log(QPos - QPosold);
+
+        } else {
+          l = 0;
+          QNegold = 0.0;
+          QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
+          while(resLin[i] < -QNeg && l < mid){
+            QNegold = QNeg;
+            l++;
+            QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
+          }
+
+          // Testing
+          tau_y_x.at(i,k) = taugrid[mid - l];
+
+          if(l == mid)
+            llmat.at(i,k) = lf0tail(Q0tail(taugrid[1]) + (resLin[i] + QNeg)/sigma) - log(sigma);
+          else
+            llmat.at(i,k) = log(taugrid[mid-l+1]-taugrid[mid-l]) - log(QNeg - QNegold);
+        }
+        //if(ll[i] == qt(1.0, 1.0, 1, 0)) Rprintf("i = %d, ll[i] = %g, resLin[i] = %g, l = %d\n", i, ll[i], resLin[i], l);
+      }
+    }
+    //   for(i = 0; i < n; i++){
+    //     Q0_val = Q0_med[i];
+    //
+    //     y_i = y.at(i,k);
+    //
+    //     if(y_i == Q0_val){
+    //       // Y_i exactly equals modeled median, conditional on X_i
+    //       llmat.at(i,k) = -log(b0dot[mid]*(1 + aTilde.at(i,mid)));
+    //       tau_y_x.at(i, k) = taugrid[mid];
+    //     }
+    //     else if(y_i > Q0_val){
+    //       // Y_i > median
+    //       Q_U = Q0_val;
+    //       l = mid;
+    //
+    //       while(y_i > Q_U && l < L-1){
+    //         Q_L = Q_U;
+    //         Q_U = Q_L + 0.5*(taugrid[l]-taugrid[l-1]) *
+    //           (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+    //         l++;
+    //       }
+    //       if(l == L){
+    //         Q_U = std::numeric_limits<double>::infinity();
+    //       }
+    //       tau_y_x.at(i, k) = taugrid[l];
+    //
+    //       if(Q_L == -std::numeric_limits<double>::infinity() ||
+    //          Q_U == std::numeric_limits<double>::infinity()){
+    //         llmat.at(i,k) = -std::numeric_limits<double>::infinity();
+    //       }
+    //       else{
+    //         alp = (y_i - Q_L) / (Q_U - Q_L);
+    //         llmat.at(i,k) += -1*log((1-alp)*b0dot[l-1]*(1+aTilde.at(i,l-1)) +
+    //           alp*b0dot[l] * (1+aTilde.at(i,l)));
+    //       }
+    //     }
+    //     else {
+    //       l = mid + 1;
+    //       Q_L = Q0_val;
+    //
+    //       while(y_i < Q_L && l > 0){
+    //         Q_U = Q_L;
+    //         Q_L = Q_U - 0.5*(taugrid[l]-taugrid[l-1]) *
+    //           (b0dot[l]*(1+aTilde.at(i,l)) + b0dot[l-1]*(1+aTilde.at(i,l-1)));
+    //         l--;
+    //       }
+    //
+    //       if(l == 0){
+    //         Q_L = -std::numeric_limits<double>::infinity();
+    //       }
+    //       tau_y_x.at(i, k) = taugrid[l];
+    //
+    //       if(Q_L == -std::numeric_limits<double>::infinity() ||
+    //          Q_U == std::numeric_limits<double>::infinity()){
+    //         llmat.at(i,k) = -std::numeric_limits<double>::infinity();
+    //       }
+    //       else{
+    //         alp = (y_i - Q_L) / (Q_U - Q_L);
+    //         llmat.at(i,k) += -1*log((1-alp)*b0dot[l-1]*(1+aTilde.at(i,l-1)) +
+    //           alp*b0dot[l] * (1+aTilde.at(i,l)));
+    //       }
+    //     }
+    //   }
+    // }
+    Rcout << "Repsonse " << k << std::endl;
+    Rcout << "sum of w0 = " << accu(w0.col(k)) << std::endl;
+    Rcout << "sum of zeta0 = " << accu(zeta0) << std::endl;
+    Rcout << "sum of wMat = " << accu(wMat.slice(k)) << std::endl;
+    Rcout << "sum of vMat = " << accu(vMat.slice(k)) << std::endl;
+    Rcout << "sum of a = " << accu(a) << std::endl;
+    Rcout << "sum of aX = " << accu(aX) << std::endl;
+    Rcout << "sum of vTilde = " << accu(vTilde) << std::endl;
+    Rcout << "sum of b0dot = " << accu(b0dot) << std::endl;
+    Rcout << "sum of bdot = " << accu(bdot) << std::endl;
+    Rcout << "sum of Q0Neg = " << accu(Q0Neg.head(mid)) << std::endl;
+    Rcout << "sum of Q0Pos = " << accu(Q0Pos.head(mid)) << std::endl;
+    Rcout << "sum of bPos = " << accu(bPos) << std::endl;
+    Rcout << "sum of bNeg = " << accu(bNeg) << std::endl;
+
+    //llmat.col(k).t().print("ll");
+    Rcout << "lp = " << accu(llmat.col(k)) << std::endl;
+    Rcout << "log prior contribution = " << lps0[k] << std::endl;
+  }
+
+  // Calculate contribution to loglikelihood from marginal distributions for
+  // each response
+  lp = arma::accu(llmat);
+  if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
+
+  //llmat.print("llmat");
+  tau_y_x.print("tau_y_x");
+  Rcout << "log-likelihood = " << lp << std::endl;
+
+  // Calculate contribution to loglikelihood from copula distribution
+  lp += log_dGaussCopula(tau_y_x, Rcorr);
+
+  Rcout << "log copula contribution = " << log_dGaussCopula(tau_y_x, Rcorr) << std::endl;
+
+  if(!llonly){
+    lp += accu(lps0);
   }
 
   return lp;
