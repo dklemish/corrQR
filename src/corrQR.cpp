@@ -109,8 +109,7 @@ int totpar;   // # of total parameters
 int nblocks;  // # of MH blocks
 bool verbose; // flag to print intermediate calc's
 bool adapt;   // flag for whether adaptive MCMC should be used
-bool fix_corr;// flag for whether correlation parameters should be
-//  fixed (true) or learned via MCMC (false)
+bool fix_corr;// flag for whether correlation parameters should be fixed (true) or learned via MCMC (false)
 int ticker;   // how often to update screen
 
 // Adaptive MCMC
@@ -378,13 +377,11 @@ SEXP corr_qr_fit(SEXP par_,
   // test2.print("test2 after 100 function call");
   //
   if(adapt == false){
-    //MCMC();
+    adMCMC();
   }
   else{
-    //adMCMC();
+    adMCMC();
   }
-
-  //PutRNGstate();
 
   return Rcpp::List::create(Rcpp::Named("parsamp") = parStore.t(),
                             Rcpp::Named("lpsamp") = lpSample,
@@ -587,7 +584,7 @@ double nuFn_inv(double nu) {
   return 2.0*log((nu - 0.5)/5.5);
 }
 
-double logPosteriorTest(const vec &par, bool llonly){
+double logPosterior(const vec &par, bool llonly){
   int i, j, k, l;
 
   // Initialize log-likelihood matrix
@@ -632,177 +629,26 @@ double logPosteriorTest(const vec &par, bool llonly){
     }
     lps0[k] += R::dlogis(par[k*npar + par_position + gam_pos_offset + 3], 0.0, 1.0, 1);
 
-
     //** 4. Calculate matrix of w_j functions at each l based on interpolating between knots.
     //       Then find v matrix = w(zeta(tau)) for each l, via linear interpolation
     // Uses arma as_scalar & find functions
     for(j = 0; j < p; j++){
       for(l = 1; l < L-1; l++){
+        zeta0.t().print("zeta0");
+        zeta0dot.t().print("zeta0dot");
+
+        Rcout << "l = " << l << "; zeta0[l] = " << zeta0[l] << std::endl;
+        find(zeta0[l] >= taugrid, 1, "last").print("last");
         lower_ind = as_scalar(find(zeta0[l] >= taugrid, 1, "last"));
         upper_ind = lower_ind + 1;
 
+        // Rcout << "t_l = " << taugrid[lower_ind] << std::endl;
         t_l = as_scalar(taugrid[lower_ind]);
+        // Rcout << "t_u = " << taugrid[upper_ind] << std::endl;
         t_u = as_scalar(taugrid[upper_ind]);
+        // Rcout << "w_l = " << wMat.slice(k).at(lower_ind, j) << std::endl;
         w_l = as_scalar(wMat.slice(k).at(lower_ind, j));
-        w_u = as_scalar(wMat.slice(k).at(upper_ind, j));
-
-        vMat.at(l,j,k) = w_l + (zeta0[l]-t_l)*(w_u - w_l)/(t_u - t_l);
-      }
-      vMat.at(0,j,k)   = wMat.at(0,j,k);
-      vMat.at(L-1,j,k) = wMat.at(L-1,j,k);
-    }
-
-    //** 5. ||v_l||^2 for each quantile l (1:L)
-    for(l = 0; l < L; l++)
-      vNormSq[l] = pow(norm(vMat.slice(k).row(l)),2);
-
-    if(vNormSq.min() > 0.0){
-      //** 5. a_i for each observation i & quantile l
-      a = x * vMat.slice(k).t();  // a is n x L
-
-      //** 6. a_chi for each l & tilde{a}_il for each obs i & quant l
-      for(l = 0; l < L; l++){
-        aX[l] = -a.col(l).min() / sqrt(vNormSq[l]);
-        for(i = 0; i < p; i++){
-          vTilde.at(l,i) = vMat.at(l,i,k) / (aX[l]*sqrt(1+vNormSq[l]));
-          aTilde.at(i,l) = a.at(i,l) / (aX[l]*sqrt(1+vNormSq[l]));
-        }
-      }
-
-      for(i = 0; i < p; i++){
-        bdot.col(i) = b0dot % vTilde.col(i);
-      }
-
-      trape(b0dot.memptr() + mid, taugrid.memptr() + mid, L - mid, Q0Pos.memptr());
-      Q0Pos[L-mid] = std::numeric_limits<double>::infinity();
-      trapeReverse(b0dot.memptr() + mid, taugrid.memptr() + mid, mid + 1, Q0Neg.memptr());
-      Q0Neg[mid+1] = std::numeric_limits<double>::infinity();
-
-      for(i = 0; i < p; i++){
-        trape(bdot.memptr() + L*i + mid, taugrid.memptr() + mid, L - mid, bPos.memptr() + L*i);
-        trapeReverse(bdot.memptr() + L*i + mid, taugrid.memptr() + mid, mid + 1, bNeg.memptr() + L*i);
-      }
-
-      // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
-      // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
-      // for each observation i, and "residual" of y_i compared to that median
-      Q0_med = vec(n).fill(gam0) + x*gam;
-      resLin = y.col(k) - Q0_med;
-
-      //** 7. Calculate log-likelihood by sequencing through observations
-      for(i = 0; i < n; i++){
-        if(resLin[i] == 0.0){
-          llmat.at(i,k) = -log(b0dot[mid] + as_scalar(x.row(i) * bdot.row(mid).t()));
-          tau_y_x.at(i,k) = taugrid[mid];
-
-        } else if(resLin[i] > 0.0){
-          l = 0;
-          QPosold = 0.0;
-          QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
-          while(resLin[i] > QPos && l < L-mid-1){
-            QPosold = QPos;
-            l++;
-            QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
-          }
-          tau_y_x.at(i,k) = taugrid[mid + l];
-
-          if(l == L - mid - 1)
-            llmat.at(i,k) = lf0tail(Q0tail(taugrid[L-2]) + (resLin[i] - QPos)/sigma) - log(sigma);
-          else
-            llmat.at(i,k) = log(taugrid[mid+l] - taugrid[mid+l-1]) - log(QPos - QPosold);
-
-        } else {
-          l = 0;
-          QNegold = 0.0;
-          QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
-          while(resLin[i] < -QNeg && l < mid){
-            QNegold = QNeg;
-            l++;
-            QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
-          }
-          tau_y_x.at(i,k) = taugrid[mid - l];
-
-          if(l == mid)
-            llmat.at(i,k) = lf0tail(Q0tail(taugrid[1]) + (resLin[i] + QNeg)/sigma) - log(sigma);
-          else
-            llmat.at(i,k) = log(taugrid[mid-l+1]-taugrid[mid-l]) - log(QNeg - QNegold);
-        }
-      }
-    }
-  }
-
-  // Calculate contribution to loglikelihood from marginal distributions for
-  // each response
-  lp = arma::accu(llmat);
-  if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
-
-  // Calculate contribution to loglikelihood from copula distribution
-  lp += log_dGaussCopula(tau_y_x, Rcorr);
-
-  if(!llonly){
-    lp += accu(lps0);
-  }
-
-  return lp;
-}
-
-double logPosteriorTest(const vec &par, bool llonly){
-  int i, j, k, l;
-
-  // Initialize log-likelihood matrix
-  llmat.fill(0);
-
-  // Loop over response variables
-  for(k = 0; k < q; k++){
-    // Read in current values of parameters
-    gam0 = par[k*npar + par_position];
-    gam  = par.subvec(k*npar + par_position + 1,
-                      k*npar + par_position + gam_pos_offset + 1);
-    sigma = sigFn(par[k*npar + par_position + gam_pos_offset + 2]);
-    nu    = nuFn(par[k*npar + par_position + gam_pos_offset + 3]);
-
-    // Calculate basic quantities
-
-    //** 1. Determine vector w_0 based on interpolation at specified knots
-    lps0[k] = ppFn0(par, k);
-
-    //** 2. zeta & zeta.dot
-    w0max    = w0.col(k).max();
-    zeta0dot = exp(shrinkFactor * (w0.col(k) - w0max));
-
-    // zeta is integral of zeta.dot
-    trape(zeta0dot.memptr() + 1, taugrid.memptr() + 1, L-1, zeta0.memptr() + 1);
-
-    // zeta0[0] = 0, zeta0[1] = 1 by definition
-    // rescale zeta0 so that it lies in [0,1] for tau != 0, 1
-    zeta0tot = zeta0[L-2];
-
-    zeta0[0] = 0.0; zeta0[L-1] = 1.0;
-    zeta0.subvec(1,L-2) = taugrid[1] + (taugrid[L-2] - taugrid[1]) * zeta0.subvec(1,L-2) / zeta0tot;
-
-    zeta0dot[0] = 0.0; zeta0dot[L-1] = 0.0;
-    zeta0dot.subvec(1,L-2) = (taugrid[L-2] - taugrid[1]) * zeta0dot.subvec(1,L-2) / zeta0tot;
-
-    //** 3. beta0.dot for each l (% is element-wise multiplication for Armadillo vectors)
-    b0dot = sigma * q0(zeta0, nu) % zeta0dot;
-
-    for(j = 1; j <= p; j++){
-      lps0[k] += ppFn(par, j, k);
-    }
-    lps0[k] += R::dlogis(par[k*npar + par_position + gam_pos_offset + 3], 0.0, 1.0, 1);
-
-
-    //** 4. Calculate matrix of w_j functions at each l based on interpolating between knots.
-    //       Then find v matrix = w(zeta(tau)) for each l, via linear interpolation
-    // Uses arma as_scalar & find functions
-    for(j = 0; j < p; j++){
-      for(l = 1; l < L-1; l++){
-        lower_ind = as_scalar(find(zeta0[l] >= taugrid, 1, "last"));
-        upper_ind = lower_ind + 1;
-
-        t_l = as_scalar(taugrid[lower_ind]);
-        t_u = as_scalar(taugrid[upper_ind]);
-        w_l = as_scalar(wMat.slice(k).at(lower_ind, j));
+        // Rcout << "w_u = " << wMat.slice(k).at(upper_ind, j) << std::endl;
         w_u = as_scalar(wMat.slice(k).at(upper_ind, j));
 
         vMat.at(l,j,k) = w_l + (zeta0[l]-t_l)*(w_u - w_l)/(t_u - t_l);
@@ -845,12 +691,6 @@ double logPosteriorTest(const vec &par, bool llonly){
       Q0_med = vec(n).fill(gam0) + x*gam;
 
       resLin = y.col(k) - Q0_med;
-
-      // Q0_med.print("Q0_med");
-      // Q0Pos.print("Q0Pos");
-      // Q0Neg.print("Q0Neg");
-      // bPos.print("bPos");
-      // bNeg.print("bNeg");
 
       // Compute modeled median (specifically the quantile of Y at tau_0 = F_0(0),
       // but our prior guess for F is a t-distribution, so F_0(0) = 0.5) of Y | X
@@ -858,6 +698,7 @@ double logPosteriorTest(const vec &par, bool llonly){
       //** 7. Calculate log-likelihood by sequencing through observations
       for(i = 0; i < n; i++){
         if(resLin[i] == 0.0){
+          // Rcout << "a" << std::endl;
           llmat.at(i,k) = -log(b0dot[mid] + as_scalar(x.row(i) * bdot.row(mid).t()));
 
           // Testing
@@ -866,10 +707,20 @@ double logPosteriorTest(const vec &par, bool llonly){
         } else if(resLin[i] > 0.0){
           l = 0;
           QPosold = 0.0;
+          // Rcout << "b" << std::endl;
+
+          // x.row(i).print("x.row");
+          // bPos.row(l).print("bPos.row");
+          // Rcout << "mult = " << as_scalar(x.row(i) * bPos.row(l).t()) << std::endl;
+          QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
+
           QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
           while(resLin[i] > QPos && l < L-mid-1){
             QPosold = QPos;
             l++;
+            // Rcout << "l = " << std::endl;
+            // bPos.row(l).print("bPos.row");
+            // Rcout << "mult = " << as_scalar(x.row(i) * bPos.row(l).t()) << std::endl;
             QPos = Q0Pos[l] + as_scalar(x.row(i) * bPos.row(l).t());
           }
 
@@ -884,10 +735,21 @@ double logPosteriorTest(const vec &par, bool llonly){
         } else {
           l = 0;
           QNegold = 0.0;
+          // Rcout << "d" << std::endl;
+
+          // x.row(i).print("x.row");
+          // bNeg.row(l).print("bNeg.row");
+          // Rcout << "mult = " << as_scalar(x.row(i) * bNeg.row(l).t()) << std::endl;
+
           QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
           while(resLin[i] < -QNeg && l < mid){
             QNegold = QNeg;
             l++;
+            // Rcout << "e" << std::endl;
+
+            // bNeg.row(l).print("bNeg.row");
+            // Rcout << "mult = " << as_scalar(x.row(i) * bNeg.row(l).t()) << std::endl;
+
             QNeg = Q0Neg[l] + as_scalar(x.row(i) * bNeg.row(l).t());
           }
 
@@ -966,24 +828,24 @@ double logPosteriorTest(const vec &par, bool llonly){
     //     }
     //   }
     // }
-    Rcout << "Repsonse " << k << std::endl;
-    Rcout << "sum of w0 = " << accu(w0.col(k)) << std::endl;
-    Rcout << "sum of zeta0 = " << accu(zeta0) << std::endl;
-    Rcout << "sum of wMat = " << accu(wMat.slice(k)) << std::endl;
-    Rcout << "sum of vMat = " << accu(vMat.slice(k)) << std::endl;
-    Rcout << "sum of a = " << accu(a) << std::endl;
-    Rcout << "sum of aX = " << accu(aX) << std::endl;
-    Rcout << "sum of vTilde = " << accu(vTilde) << std::endl;
-    Rcout << "sum of b0dot = " << accu(b0dot) << std::endl;
-    Rcout << "sum of bdot = " << accu(bdot) << std::endl;
-    Rcout << "sum of Q0Neg = " << accu(Q0Neg.head(mid)) << std::endl;
-    Rcout << "sum of Q0Pos = " << accu(Q0Pos.head(mid)) << std::endl;
-    Rcout << "sum of bPos = " << accu(bPos) << std::endl;
-    Rcout << "sum of bNeg = " << accu(bNeg) << std::endl;
+    // Rcout << "Repsonse " << k << std::endl;
+    // Rcout << "sum of w0 = " << accu(w0.col(k)) << std::endl;
+    // Rcout << "sum of zeta0 = " << accu(zeta0) << std::endl;
+    // Rcout << "sum of wMat = " << accu(wMat.slice(k)) << std::endl;
+    // Rcout << "sum of vMat = " << accu(vMat.slice(k)) << std::endl;
+    // Rcout << "sum of a = " << accu(a) << std::endl;
+    // Rcout << "sum of aX = " << accu(aX) << std::endl;
+    // Rcout << "sum of vTilde = " << accu(vTilde) << std::endl;
+    // Rcout << "sum of b0dot = " << accu(b0dot) << std::endl;
+    // Rcout << "sum of bdot = " << accu(bdot) << std::endl;
+    // Rcout << "sum of Q0Neg = " << accu(Q0Neg.head(mid)) << std::endl;
+    // Rcout << "sum of Q0Pos = " << accu(Q0Pos.head(mid)) << std::endl;
+    // Rcout << "sum of bPos = " << accu(bPos) << std::endl;
+    // Rcout << "sum of bNeg = " << accu(bNeg) << std::endl;
 
     //llmat.col(k).t().print("ll");
-    Rcout << "lp = " << accu(llmat.col(k)) << std::endl;
-    Rcout << "log prior contribution = " << lps0[k] << std::endl;
+    // Rcout << "lp = " << accu(llmat.col(k)) << std::endl;
+    // Rcout << "log prior contribution = " << lps0[k] << std::endl;
   }
 
   // Calculate contribution to loglikelihood from marginal distributions for
@@ -992,21 +854,19 @@ double logPosteriorTest(const vec &par, bool llonly){
   if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
 
   //llmat.print("llmat");
-  tau_y_x.print("tau_y_x");
-  Rcout << "log-likelihood = " << lp << std::endl;
+  // tau_y_x.print("tau_y_x");
+  // Rcout << "log-likelihood = " << lp << std::endl;
 
   // Calculate contribution to loglikelihood from copula distribution
   lp += log_dGaussCopula(tau_y_x, Rcorr);
 
-  Rcout << "log copula contribution = " << log_dGaussCopula(tau_y_x, Rcorr) << std::endl;
+  // Rcout << "log copula contribution = " << log_dGaussCopula(tau_y_x, Rcorr) << std::endl;
 
   if(!llonly){
     lp += accu(lps0);
   }
 
   return lp;
-
-  //return 0;
 }
 
 vec unitFn(const vec &u) {
@@ -1120,7 +980,7 @@ void MCMC(void){
     zsamp[b]        = vec(currBlockSize, arma::fill::zeros);
     par_incr[b]     = vec(currBlockSize, arma::fill::zeros);
 
-    R[b] = mat(blockSizes[b], currBlockSize); // allocate memory for arma matrix
+    R[b] = mat(currBlockSize, currBlockSize); // allocate memory for arma matrix
     R[b] = arma::chol(S[b], "upper");
   }
 
@@ -1194,6 +1054,175 @@ void MCMC(void){
 }
 
 
+// void adMCMC(void){
+//   int b, i, j;
+//
+//   Rcout << "Start of adMCMC" << std::endl;
+//
+//   int u = 0;
+//   int g = 0;
+//   int iter;
+//   int store_lp=0;
+//   int store_par=0;
+//   int store_acpt=0;
+//   int currBlockSize=0;
+//
+//   double lpval = 0;
+//   double lpvalnew = 0;
+//   double lp_diff;
+//   double chs;
+//   double lambda;
+//
+//   ivec blocks_rank(nblocks);
+//   ivec run_counter(nblocks, arma::fill::zeros);
+//   vec  alpha(nblocks);
+//   vec  alpha_run(nblocks, arma::fill::zeros);
+//
+//   vec  blocks_d(npar);
+//   vec  parOld(npar);
+//   vec  logUniform(nblocks*niter);
+//
+//   ivec chunk_size(nblocks, arma::fill::zeros);
+//   vec  acpt_chunk(nblocks, arma::fill::zeros);
+//   vec  frac(nblocks);
+//   vec  gammaAdj(nblocks*niter);
+//
+//   vec  zsamp(npar);
+//   vec  par_incr(npar, arma::fill::zeros);
+//
+//   // Ragged arrays
+//   std::vector<ivec> blocks_pivot(nblocks);
+//   std::vector<vec>  parbar_chunk(nblocks);
+//   std::vector<mat>  R(nblocks); // Chol factor of MCMC block proposal covariances
+//
+//   // Initialize variables
+//   for(b=0; b < nblocks; b++){
+//     // Dynamically allocate ragged arrays
+//     currBlockSize   = blockSizes[b];
+//
+//     R[b]            = mat(currBlockSize, currBlockSize);
+//     blocks_pivot[b] = ivec(currBlockSize);
+//     parbar_chunk[b] = vec(currBlockSize, arma::fill::zeros);
+//
+//     chunk_size[b] = 0;
+//     acpt_chunk[b] = 0.0;
+//
+//     R[b] = arma::chol(S[b], "upper");
+//     frac[b] = sqrt(1.0 / ((double) refresh_counter[b] + 1.0));
+//   }
+//
+//   GetRNGstate();
+//
+//   // Use Rcpp sugar random number generation functions
+//   // Pre-allocate random numbers used in MCMC to speed execution
+//   //  at cost of increased memory
+//   logUniform = arma::log(as<arma::vec>(runif(logUniform.size())));
+//   gammaAdj   = as<arma::vec>(rgamma(gammaAdj.size(), 3.0, 1.0));
+//
+//   parStore.col(0) = parSample;
+//   lpval = logPosterior(parSample, FALSE);
+//   if(verbose) Rcout << "Initial lp = " << lpval << std::endl;
+//
+//   // Adaptive Metropolis MCMC
+//   for(iter = 0; iter < niter; iter++){
+//     // Rcout << "Iteration: " << iter << ". lp = " << lpval << std::endl;
+//     // lm.t().print("lm");
+//
+//     // Model parameters other than copula parameters
+//     for(b = 0; b < nblocks; b++){
+//       // Sample new parameters for variables in block b
+//       currBlockSize = blockSizes[b];
+//       chunk_size[b]++;
+//
+//       for(i = 0; i < currBlockSize; i++)
+//         zsamp[i] = R::rnorm(0.0, 1.0);
+//
+//       par_incr.subvec(0, currBlockSize) = trimatu(R[b]) * zsamp.subvec(0, currBlockSize);
+//       lambda        = lm[b] * sqrt(3.0 / gammaAdj[g++]);
+//
+//       parOld = parSample;
+//
+//       for(i = 0; i < currBlockSize; i++){
+//         parSample(blocks[b][i]) += lambda * par_incr[i];
+//       }
+//       // parSample.elem(blocks[b]) += lambda * par_incr[b];
+//
+//       // Evaluate loglikelihood at proposed parameters
+//       lpvalnew = logPosterior(parSample, FALSE);
+//
+//       lp_diff = lpvalnew - lpval;
+//
+//       alpha[b] = exp(lp_diff);
+//       if(alpha[b] > 1.0)
+//         alpha[b] = 1.0;
+//
+//       Rcout << "Iter/block = " << iter << "/" << b << "; " <<
+//         "alpha = " << alpha[b] << "; lp_diff = " << lp_diff << std::endl;
+//       // Check for acceptance
+//       if(logUniform[u++] < lp_diff){
+//         // Accept
+//         lpval = lpvalnew;
+//       }
+//       else{
+//         // Reject
+//         parSample = parOld;
+//       }
+//
+//       alpha_run[b] = ((double)run_counter[b] * alpha_run[b] + alpha[b]) / ((double)run_counter[b] + 1.0);
+//       run_counter[b]++;
+//     }
+//
+//     // Store results at appropriate iterations
+//     if((iter+1) % thin == 0){
+//       lpSample[store_lp++] = lpval;
+//       parStore.col(store_par++) = parSample;
+//       acceptSample.row(store_acpt++) = alpha;
+//     }
+//
+//     // Output status updates for users
+//     if(verbose){
+//       if(niter < ticker || (iter+1) % (niter / ticker) == 0){
+//         Rcout << "iter = " << iter + 1 << ", lp = " << lpval << std::endl;
+//         alpha_run.t().print("alpha_run");
+//
+//         alpha_run.zeros();  // reinit to 0 for each block
+//         run_counter.zeros();
+//       }
+//     }
+//
+//     // Adapt covariance matrices for proposal distributions for each block
+//     for(b=0; b < nblocks; b++){
+//       chs = std::max((double) chunk_size[b], 1.0);
+//
+//       acpt_chunk[b]   = acpt_chunk[b] + (alpha[b] - acpt_chunk[b]) / chs;
+//       parbar_chunk[b] = parbar_chunk[b] + (parSample.elem(blocks[b]) - parbar_chunk[b]) / chs;
+//
+//       if(chunk_size[b] == refresh * blockSizes[b]){
+//         // Rcout << "Adjusting covariance matrices!" << std::endl;
+//         refresh_counter[b]++;
+//         frac[b] = sqrt(1.0 / ((double) refresh_counter[b] + 1.0));
+//
+//         for(i = 0; i < blockSizes[b]; i++){
+//           for(j = 0; j < i; j++){
+//             S[b].at(i,j) = (1.0 - frac[b]) * S[b].at(i,j) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][j] - mu[b][j]);
+//             S[b].at(j,i) = S[b].at(i,j);
+//           }
+//           S[b].at(i,i) = (1.0 - frac[b]) * S[b].at(i,i) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][i] - mu[b][i]);
+//         }
+//
+//         R[b]  = arma::chol(S[b], "upper");
+//         mu[b] = mu[b] + frac[b] * (parbar_chunk[b] - mu[b]);
+//         lm[b] = lm[b] * exp(frac[b] * (acpt_chunk[b] - acpt_target[b]));
+//
+//         acpt_chunk[b] = 0;
+//         parbar_chunk[b].zeros();
+//         chunk_size[b] = 0;
+//       }
+//     }
+//   }
+//   PutRNGstate();
+// }
+
 void adMCMC(void){
   int b, i, j;
 
@@ -1215,19 +1244,17 @@ void adMCMC(void){
 
   ivec blocks_rank(nblocks);
   ivec run_counter(nblocks, arma::fill::zeros);
-  vec alpha(nblocks);
-  vec alpha_run(nblocks, arma::fill::zeros);
+  vec  alpha(nblocks);
+  vec  alpha_run(nblocks, arma::fill::zeros);
 
-  vec blocks_d(npar);
-  vec parOld(npar);
-  vec logUniform(nblocks*niter);
+  vec  blocks_d(npar);
+  vec  parOld(npar);
+  vec  logUniform(nblocks*niter);
 
   ivec chunk_size(nblocks, arma::fill::zeros);
-  vec acpt_chunk(nblocks, arma::fill::zeros);
-  vec frac(nblocks);
-  vec gammaAdj(nblocks*niter);
-
-  // Rcout << "1" << std::endl;
+  vec  acpt_chunk(nblocks, arma::fill::zeros);
+  vec  frac(nblocks);
+  vec  gammaAdj(nblocks*niter);
 
   // Ragged arrays
   std::vector<ivec> blocks_pivot(nblocks);
@@ -1238,18 +1265,23 @@ void adMCMC(void){
 
   // Initialize variables
   for(b=0; b < nblocks; b++){
-    currBlockSize = blockSizes[b];
+    // Dynamically allocate ragged arrays
+    currBlockSize   = blockSizes[b];
+
+    R[b]            = mat(currBlockSize, currBlockSize);
     blocks_pivot[b] = ivec(currBlockSize);
     parbar_chunk[b] = vec(currBlockSize, arma::fill::zeros);
     zsamp[b]        = vec(currBlockSize, arma::fill::zeros);
     par_incr[b]     = vec(currBlockSize, arma::fill::zeros);
 
-    R[b] = mat(blockSizes[b], currBlockSize);
+    chunk_size[b] = 0;
+    acpt_chunk[b] = 0.0;
+
     R[b] = arma::chol(S[b], "upper");
     frac[b] = sqrt(1.0 / ((double) refresh_counter[b] + 1.0));
   }
 
-  Rcout << "Block sizes = " << blockSizes << std::endl;
+  GetRNGstate();
 
   // Use Rcpp sugar random number generation functions
   // Pre-allocate random numbers used in MCMC to speed execution
@@ -1257,31 +1289,24 @@ void adMCMC(void){
   logUniform = arma::log(as<arma::vec>(runif(logUniform.size())));
   gammaAdj   = as<arma::vec>(rgamma(gammaAdj.size(), 3.0, 1.0));
 
-  Rcout << "2" << std::endl;
-
   parStore.col(0) = parSample;
   lpval = logPosterior(parSample, FALSE);
   if(verbose) Rcout << "Initial lp = " << lpval << std::endl;
 
-  Rcout << "3" << std::endl;
-
   // Adaptive Metropolis MCMC
   for(iter = 0; iter < niter; iter++){
-    // Rcout << "Iteration: " << iter << ". lp = " << lpval << std::endl;
-    // lm.t().print("lm");
-
     // Model parameters other than copula parameters
     for(b = 0; b < nblocks; b++){
       // Sample new parameters for variables in block b
       currBlockSize = blockSizes[b];
+      chunk_size[b]++;
+
       zsamp[b]      = as<arma::vec>(rnorm(currBlockSize)); // Use Rcpp sugar rnorm
       par_incr[b]   = trimatu(R[b]) * zsamp[b];
       lambda        = lm[b] * sqrt(3.0 / gammaAdj[g++]);
 
       parOld = parSample;
       parSample.elem(blocks[b]) += lambda * par_incr[b];
-
-      chunk_size[b]++;
 
       // Evaluate loglikelihood at proposed parameters
       lpvalnew = logPosterior(parSample, FALSE);
@@ -1308,9 +1333,9 @@ void adMCMC(void){
 
     // Store results at appropriate iterations
     if((iter+1) % thin == 0){
-      lpSample[store_lp++] = lpval;
-      parStore.col(store_par++) = parSample;
-      acceptSample.row(store_acpt++) = alpha;
+      lpSample[store_lp++]           = lpval;
+      parStore.col(store_par++)      = parSample;
+      acceptSample.row(store_acpt++) = alpha.t();
     }
 
     // Output status updates for users
@@ -1338,12 +1363,10 @@ void adMCMC(void){
 
         for(i = 0; i < blockSizes[b]; i++){
           for(j = 0; j < i; j++){
-            S[b].at(i,j) = (1.0 - frac[b]) * S[b].at(i,j) +
-              frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][j] - mu[b][j]);
+            S[b].at(i,j) = (1.0 - frac[b]) * S[b].at(i,j) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][j] - mu[b][j]);
             S[b].at(j,i) = S[b].at(i,j);
           }
-          S[b].at(i,i) = (1.0 - frac[b]) * S[b].at(i,i) +
-            frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][i] - mu[b][i]);
+          S[b].at(i,i) = (1.0 - frac[b]) * S[b].at(i,i) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][i] - mu[b][i]);
         }
 
         R[b]  = arma::chol(S[b], "upper");
@@ -1356,4 +1379,5 @@ void adMCMC(void){
       }
     }
   }
+  PutRNGstate();
 }
