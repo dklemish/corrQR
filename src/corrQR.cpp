@@ -634,11 +634,16 @@ double logPosterior(const vec &par, bool llonly){
     // Uses arma as_scalar & find functions
     for(j = 0; j < p; j++){
       for(l = 1; l < L-1; l++){
-        zeta0.t().print("zeta0");
-        zeta0dot.t().print("zeta0dot");
+        // if(isnan(zeta0[1])){
+        //   Rcout << "k = " << k << std::endl;
+        //   parSample.print("parSample");
+        //   w0.col(k).print("w0");
+        //   zeta0.t().print("zeta0");
+        //   zeta0dot.t().print("zeta0dot");
+        // }
 
-        Rcout << "l = " << l << "; zeta0[l] = " << zeta0[l] << std::endl;
-        find(zeta0[l] >= taugrid, 1, "last").print("last");
+        // Rcout << "l = " << l << "; zeta0[l] = " << zeta0[l] << std::endl;
+        // find(zeta0[l] >= taugrid, 1, "last").print("last");
         lower_ind = as_scalar(find(zeta0[l] >= taugrid, 1, "last"));
         upper_ind = lower_ind + 1;
 
@@ -1295,6 +1300,7 @@ void adMCMC(void){
 
   // Adaptive Metropolis MCMC
   for(iter = 0; iter < niter; iter++){
+    Rcout << "iter = " << iter << std::endl;
     // Model parameters other than copula parameters
     for(b = 0; b < nblocks; b++){
       // Sample new parameters for variables in block b
@@ -1308,14 +1314,20 @@ void adMCMC(void){
       parOld = parSample;
       parSample.elem(blocks[b]) += lambda * par_incr[b];
 
+      // Rcout << "iter = " << iter << "; b = " << b << std::endl;
+      // par_incr[b].t().print("par_incr");
+      // parSample.t().print("parSample");
+
       // Evaluate loglikelihood at proposed parameters
       lpvalnew = logPosterior(parSample, FALSE);
 
       lp_diff = lpvalnew - lpval;
 
+      // Rcout << "lp_diff = " << lp_diff << std::endl;
+
       alpha[b] = exp(lp_diff);
-      if(alpha[b] > 1.0)
-        alpha[b] = 1.0;
+      if(alpha[b] > 1.0)  alpha[b] = 1.0;
+      if(isnan(alpha[b])) alpha[b] = 0.0;
 
       // Check for acceptance
       if(logUniform[u++] < lp_diff){
@@ -1353,7 +1365,12 @@ void adMCMC(void){
     for(b=0; b < nblocks; b++){
       chs = std::max((double) chunk_size[b], 1.0);
 
+      // Rcout << "chs = " << chs << std::endl;
+      // acpt_target.t().print("acpt_target");
+      // acpt_chunk.t().print("acpt_chunk before");
+      // alpha.t().print("alpha");
       acpt_chunk[b]   = acpt_chunk[b] + (alpha[b] - acpt_chunk[b]) / chs;
+      // acpt_chunk.t().print("acpt_chunk after");
       parbar_chunk[b] = parbar_chunk[b] + (parSample.elem(blocks[b]) - parbar_chunk[b]) / chs;
 
       if(chunk_size[b] == refresh * blockSizes[b]){
@@ -1369,9 +1386,21 @@ void adMCMC(void){
           S[b].at(i,i) = (1.0 - frac[b]) * S[b].at(i,i) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][i] - mu[b][i]);
         }
 
+        // Rcout << "b = " << b << " for update!" << std::endl;
+
         R[b]  = arma::chol(S[b], "upper");
+
+        // S[b].print("S");
+        // R[b].print("R");
+        // mu[b].print("mu before");
         mu[b] = mu[b] + frac[b] * (parbar_chunk[b] - mu[b]);
+        // mu[b].print("mu after");
+
+        // lm.print("lm before");
         lm[b] = lm[b] * exp(frac[b] * (acpt_chunk[b] - acpt_target[b]));
+        // lm.print("lm after");
+
+        // frac.t().print("frac");
 
         acpt_chunk[b] = 0;
         parbar_chunk[b].zeros();
