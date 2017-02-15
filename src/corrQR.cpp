@@ -1300,7 +1300,7 @@ void adMCMC(void){
 
   // Adaptive Metropolis MCMC
   for(iter = 0; iter < niter; iter++){
-    Rcout << "iter = " << iter << std::endl;
+    // Rcout << "iter = " << iter << std::endl;
     // Model parameters other than copula parameters
     for(b = 0; b < nblocks; b++){
       // Sample new parameters for variables in block b

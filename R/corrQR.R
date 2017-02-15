@@ -413,12 +413,29 @@ sigFn.inv <- function(s, a.sig) return(2 * log(s))
 unitFn    <- function(u) return(pmin(1 - 1e-10, pmax(1e-10, u)))
 logmean   <- function(lx) return(max(lx) + log(mean(exp(lx - max(lx)))))
 logsum    <- function(lx) return(logmean(lx) + log(length(lx)))
+trape     <- function(x, h, len = length(x)) return(c(0, cumsum(.5 * (x[-1] + x[-len]) * (h[-1] - h[-len]))))
 
 klGP <- function(lam1, lam2, nknots = 11){
+  # Determine KL divergence between two multivariate normals with mean zero and
+  # covariances determined by squared exponential covariance functions with
+  # differing lambda / length parameters.
+
+  # Used to choose specific lambda values to approximate the prior on lambda;
+  # values are chosen so that the KL divergence between consecutive lambda values
+  # is approximately 1.
   tau <- seq(0, 1, len = nknots)
-  dd <- outer(tau, tau, "-")^2
-  K1 <- exp(-lam1^2 * dd); diag(K1) <- 1 + 1e-10; R1 <- chol(K1); log.detR1 <- sum(log(diag(R1)))
-  K2 <- exp(-lam2^2 * dd); diag(K2) <- 1 + 1e-10; R2 <- chol(K2); log.detR2 <- sum(log(diag(R2)))
+  dd  <- outer(tau, tau, "-")^2
+
+  K1        <- exp(-lam1^2 * dd)
+  diag(K1)  <- 1 + 1e-10
+  R1        <- chol(K1)
+  log.detR1 <- sum(log(diag(R1)))
+
+  K2        <- exp(-lam2^2 * dd)
+  diag(K2)  <- 1 + 1e-10
+  R2        <- chol(K2)
+  log.detR2 <- sum(log(diag(R2)))
+
   return(log.detR2-log.detR1 - 0.5 * (nknots - sum(diag(solve(K2, K1)))))
 }
 
@@ -438,3 +455,162 @@ proxFn <- function(prox.Max, prox.Min, kl.step = 1){
   }
   return(prox.grid)
 }
+
+
+# coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
+#   niter <- object$dim[8]
+#   nsamp <- object$dim[10]
+#   pars <- matrix(object$parsamp, ncol = nsamp)
+#   ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
+#
+#   n <- object$dim[1]
+#   p <- object$dim[2]
+#   L <- object$dim[3]
+#   mid <- object$dim[4] + 1
+#   nknots <- object$dim[5]
+#   ngrid <- object$dim[6]
+#
+#   a.sig  <- object$hyper[1:2]
+#   a.kap  <- matrix(object$hyper[-c(1:2)], nrow = 3)
+#   tau.g  <- object$tau.g
+#   reg.ix <- object$reg.ix
+#   x.ce   <- outer(rep(1, L), attr(object$x, "scaled:center"))
+#   x.sc   <- outer(rep(1,L), attr(object$x, "scaled:scale"))
+#
+#   base.bundle <- list()
+#   if(object$fbase.choice == 1){
+#     base.bundle$q0 <- function(u, nu = Inf) return(1 / (dt(qt(unitFn(u), df = nu), df = nu) * qt(.9, df = nu)))
+#     base.bundle$Q0 <- function(u, nu = Inf) return(qt(unitFn(u), df = nu) / qt(.9, df = nu))
+#     base.bundle$F0 <- function(x, nu = Inf) return(pt(x*qt(.9, df = nu), df = nu))
+#   } else {
+#     base.bundle$q0 <- function(u, nu = Inf) return(1 / (dunif(qunif(u, -1,1), -1,1)))
+#     base.bundle$Q0 <- function(u, nu = Inf) return(qunif(u, -1,1))
+#     base.bundle$F0 <- function(x, nu = Inf) return(punif(x, -1,1))
+#   }
+#
+#   beta.samp <- apply(pars[,ss],
+#                      2,
+#                      function(p1)
+#                        c(estFn(p1, object$x, object$y, object$gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce, x.ce, x.sc, base.bundle)))
+#
+#   if(reduce) tau.g <- tau.g[reg.ix]
+#   L <- length(tau.g)
+#
+#   if(plot){
+#     nr <- ceiling(sqrt(p+show.intercept))
+#     nc <- ceiling((p+show.intercept)/nr)
+#     par(mfrow = c(nr, nc))
+#   }
+#
+#   reach <- 0
+#   beta.hat <- list()
+#   plot.titles <- c("Intercept", object$xnames)
+#   j <- 1
+#   b <- beta.samp[reach + 1:L,]
+#
+#   beta.hat[[j]] <-
+#     getBands(b, plot = (plot & show.intercept),
+#              add = FALSE,
+#              x = tau.g,
+#              xlab = "tau",
+#              ylab = "Coefficient", bty = "n", ...)
+#
+#   if(plot & show.intercept) title(main = plot.titles[j])
+#
+#   reach <- reach + L
+#
+#   for(j in 2:(p+1)){
+#     b <- beta.samp[reach + 1:L,]
+#     beta.hat[[j]] <-
+#       getBands(b, plot = plot,
+#                add = FALSE,
+#                x = tau.g,
+#                xlab = "tau",
+#                ylab = "Coefficient", bty = "n", ...)
+#     if(plot) {
+#       title(main = plot.titles[j])
+#       abline(h = 0, lty = 2, col = 4)
+#     }
+#
+#     reach <- reach + L
+#   }
+#
+#   names(beta.hat) <- plot.titles
+#
+#   invisible(list(beta.samp = beta.samp, beta.est = beta.hat))
+# }
+
+# getBands <- function(b, col = 2, lwd = 1,
+#                      plot = TRUE, add = FALSE,
+#                      x = seq(0,1,len=nrow(b)), remove.edges = TRUE, ...){
+#
+#   colRGB   <- col2rgb(col)/255
+#   colTrans <- rgb(colRGB[1], colRGB[2], colRGB[3], alpha = 0.2)
+#
+#   b.med <- apply(b, 1, quantile, pr = .5)
+#   b.lo <- apply(b, 1, quantile, pr = .025)
+#   b.hi <- apply(b, 1, quantile, pr = 1 - .025)
+#
+#   L <- nrow(b)
+#   ss <- 1:L; ss.rev <- L:1
+#
+#   if(remove.edges){
+#     ss <- 2:(L-1); ss.rev <- (L-1):2
+#   }
+#   if(plot){
+#     if(!add)
+#       plot(x[ss], b.med[ss], ty = "n", ylim = range(c(b.lo[ss], b.hi[ss])), ...)
+#
+#     polygon(x[c(ss, ss.rev)], c(b.lo[ss], b.hi[ss.rev]), col = colTrans, border = colTrans)
+#     lines(x[ss], b.med[ss], col = col, lwd = lwd)
+#   }
+#   invisible(cbind(b.lo, b.med, b.hi))
+# }
+
+# estFn <- function(par, x, y, gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce = TRUE, x.ce = 0, x.sc = 1, base.bundle){
+#
+#   n <- length(y)
+#   p <- ncol(x)
+#   wKnot <- matrix(par[1:(nknots*(p+1))], nrow = nknots)
+#   w0PP  <- ppFn0(wKnot[,1], gridmats, L, nknots, ngrid)
+#   w0    <- w0PP$w
+#   wPP   <- apply(wKnot[,-1,drop=FALSE], 2, ppFn, gridmats = gridmats, L = L, nknots = nknots, ngrid = ngrid, a.kap = a.kap)
+#   wMat  <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
+#
+#   zeta0.dot <- exp(shrinkFn(p) * (w0 - max(w0)))
+#   zeta0     <- trape(zeta0.dot[-c(1,L)], tau.g[-c(1,L)], L-2)
+#   zeta0.tot <- zeta0[L-2]
+#   zeta0     <- c(0, tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0 / zeta0.tot, 1)
+#   zeta0.dot <- (tau.g[L-1]-tau.g[2])*zeta0.dot / zeta0.tot
+#   zeta0.dot[c(1,L)] <- 0
+#   zeta0.ticks <- pmin(L-1, pmax(1, sapply(zeta0, function(u) sum(tau.g <= u))))
+#   zeta0.dists <- (zeta0 - tau.g[zeta0.ticks]) / (tau.g[zeta0.ticks+1] - tau.g[zeta0.ticks])
+#   vMat      <- apply(wMat, 2, transform.grid, ticks = zeta0.ticks, dists = zeta0.dists)
+#
+#   reach <- nknots*(p+1)
+#   gam0 <- par[reach + 1]; reach <- reach + 1
+#   gam <- par[reach + 1:p]; reach <- reach + p
+#   sigma <- sigFn(par[reach + 1], a.sig); reach <- reach + 1
+#   nu <- nuFn(par[reach + 1]);
+#
+#   b0dot <- sigma * base.bundle$q0(zeta0, nu) * zeta0.dot
+#   beta0.hat <- rep(NA, L)
+#   beta0.hat[mid:L] <- gam0 + trape(b0dot[mid:L], tau.g[mid:L], L - mid + 1)
+#   beta0.hat[mid:1] <- gam0 + trape(b0dot[mid:1], tau.g[mid:1], mid)
+#
+#   vNorm  <- sqrt(rowSums(vMat^2))
+#   a      <- tcrossprod(vMat, x)
+#   aX     <- apply(-a, 1, max)/vNorm
+#   aX[is.nan(aX)] <- Inf
+#   aTilde <- vMat / (aX * sqrt(1 + vNorm^2))
+#   ab0    <- b0dot * aTilde
+#
+#   beta.hat <- kronecker(rep(1,L), t(gam))
+#   beta.hat[mid:L,] <- beta.hat[mid:L,] + apply(ab0[mid:L,,drop=FALSE], 2, trape, h = tau.g[mid:L], len = L - mid + 1)
+#   beta.hat[mid:1,] <- beta.hat[mid:1,] + apply(ab0[mid:1,,drop=FALSE], 2, trape, h = tau.g[mid:1], len = mid)
+#   beta.hat <- beta.hat / x.sc
+#   beta0.hat <- beta0.hat - rowSums(beta.hat * x.ce)
+#   betas <- cbind(beta0.hat, beta.hat)
+#   if(reduce) betas <- betas[reg.ix,,drop = FALSE]
+#   return(betas)
+# }
