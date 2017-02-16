@@ -14,8 +14,7 @@ corrQR <- function(x, y, sd, Rcorr,
                    blocking = "by.response",
                    expo = 2,
                    blocks.mu, blocks.S,
-                   fix.nu = FALSE, fix.corr = TRUE,
-                   adapt = FALSE){
+                   fix.nu = FALSE, fix.corr = TRUE){
   # Input parameters:
   #  x - Predictors (n by p matrix)
   #  y - Response (n by q matrix)
@@ -370,7 +369,7 @@ corrQR <- function(x, y, sd, Rcorr,
     }
   }
 
-  imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks), adapt, fix.corr)
+  imcmc.par <- c(nblocks, ref.size, TRUE, max(10, niter/1e4), rep(0, nblocks), fix.corr)
   dmcmc.par <- c(0.999, rep(acpt.target, nblocks), 2.38 / sqrt(blocks.size))
 
   tm.cpp <- system.time(
@@ -382,14 +381,17 @@ corrQR <- function(x, y, sd, Rcorr,
   )
   set.seed(NULL)
 
-  oo$x <- x
-  oo$y <- y
-  oo$tau.g <- tau.g
-  oo$xnames <- x.names
-  oo$ynames <- y.names
-  oo$prox <- prox.grid
-  oo$reg.ix <- reg.ix
-  oo$runtime <- tm.cpp[3]
+  oo$x        <- x
+  oo$y        <- y
+  oo$xnames   <- x.names
+  oo$ynames   <- y.names
+  oo$tau.g    <- tau.g
+  oo$prox     <- prox.grid
+  oo$reg.ix   <- reg.ix
+  oo$dim      <- dimpars
+  oo$imcmcpar <- imcmc.par
+  oo$dmcmcpar <- dmcmc.par
+  oo$runtime  <- tm.cpp[3]
 
   class(oo) <- "corrQR"
   return(oo)
@@ -456,7 +458,27 @@ proxFn <- function(prox.Max, prox.Min, kl.step = 1){
   return(prox.grid)
 }
 
+trace.plot <- function(object){
+  p       <- object$dim[2]
+  q       <- object$dim[3]
+  nknots  <- object$dim[6]
+  ncorr   <- object$dim[12]
+  npar    <- (nknots+1) * (p+1) + 2
+  totpar  <- npar*q + ncorr
 
+  reach   <- 1
+  samples <- as.data.frame(object$parsamp)
+  for(i in 1:q){
+    for(j in 0:p){
+      for(k in 1:nkots){
+        colnames(samples)[reach] <- paste("W",j,"_",k,sep="")
+        reach <- reach + 1
+      }
+
+    }
+  }
+
+}
 # coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
 #   niter <- object$dim[8]
 #   nsamp <- object$dim[10]
