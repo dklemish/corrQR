@@ -393,6 +393,36 @@ corrQR <- function(x, y, sd, Rcorr,
   oo$dmcmcpar <- dmcmc.par
   oo$runtime  <- tm.cpp[3]
 
+  samples <- as.data.frame(cbind(1:nsamp, oo$parsamp))
+  parnames <- colnames(samples)
+
+  parnames[1] <- "Iter"
+  reach       <- 2
+
+  for(i in 1:q){
+    for(j in 0:p){
+      for(k in 1:nknots){
+        parnames[reach] <- paste("W", i, j, "(", k, ")", sep="")
+        reach <- reach + 1
+      }
+    }
+    for(j in 0:p){
+      parnames[reach] <- paste("gamma", i, j, sep="")
+      reach <- reach+1
+    }
+    parnames[reach] <- paste("sigma", i, sep="")
+    parnames[reach+1] <- paste("nu", i, sep="")
+    reach <- reach + 2
+  }
+  for(i in 1:(q-1)){
+    for(j in (i+1):q){
+      parnames[reach] <- paste("rho",i,j,sep="")
+      reach <- reach + 1
+    }
+  }
+  colnames(samples) <- parnames
+  oo$parsamp <- samples
+
   class(oo) <- "corrQR"
   return(oo)
 }
@@ -466,18 +496,13 @@ trace.plot <- function(object){
   npar    <- (nknots+1) * (p+1) + 2
   totpar  <- npar*q + ncorr
 
-  reach   <- 1
-  samples <- as.data.frame(object$parsamp)
-  for(i in 1:q){
-    for(j in 0:p){
-      for(k in 1:nkots){
-        colnames(samples)[reach] <- paste("W",j,"_",k,sep="")
-        reach <- reach + 1
-      }
-
-    }
-  }
-
+  pl <- lapply(2:(totpar+1), function(.x)
+    ggplot(object$parsamp, aes(x=Iter, y=object$parsamp[,.x])) +
+      geom_line() + theme_bw() +
+      ylab(colnames(object$parsamp)[.x])
+  )
+  ml <- marrangeGrob(pl, nrow=4, ncol=4)
+  ml
 }
 # coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
 #   niter <- object$dim[8]
