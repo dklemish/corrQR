@@ -386,9 +386,16 @@ corrQR <- function(x, y, sd, Rcorr,
   oo$xnames   <- x.names
   oo$ynames   <- y.names
   oo$tau.g    <- tau.g
+  oo$dim      <- dimpars
+
+  oo$A        <- A
+  oo$R        <- R
+  oo$log.det  <- log.det
+  oo$lp.grid  <- lp.grid
+
   oo$prox     <- prox.grid
   oo$reg.ix   <- reg.ix
-  oo$dim      <- dimpars
+  oo$hyper    <- hyperPar
   oo$imcmcpar <- imcmc.par
   oo$dmcmcpar <- dmcmc.par
   oo$runtime  <- tm.cpp[3]
@@ -427,6 +434,8 @@ corrQR <- function(x, y, sd, Rcorr,
   return(oo)
 }
 
+sum.sq <- function(x) return(sum(x^2))
+
 waic <- function(logliks, print = TRUE){
   lppd <- sum(apply(logliks, 1, logmean))
   p.waic.1 <- 2 * lppd - 2 * sum(apply(logliks, 1, mean))
@@ -437,6 +446,8 @@ waic <- function(logliks, print = TRUE){
   invisible(c(WAIC1 = waic.1, WAIC2 = waic.2))
 }
 
+
+extract   <- function(lo, vn) return(lo[[vn]])
 lamFn     <- function(prox) return(sqrt(-100*log(prox)))
 nuFn      <- function(z) return(0.5 + 5.5*exp(z/2))
 nuFn.inv  <- function(nu) return(2*log((nu - 0.5)/5.5))
@@ -504,26 +515,130 @@ trace.plot <- function(object){
   ml <- marrangeGrob(pl, nrow=4, ncol=4)
   ml
 }
+
+ppFn0 <- function(w.knot, A, R, ld, lp, L, nknots, ngrid){
+  w.grid     <- matrix(NA, L, ngrid)
+  lpost.grid <- rep(NA, ngrid)
+  for(i in 1:ngrid){
+    r             <- sum.sq(backsolve(R[[i]], w.knot, transpose = TRUE))
+    w.grid[,i]    <- A[[i]] %*% w.knot
+    lpost.grid[i] <- -(0.5*nknots+1.5)*log1p(0.5*r/1.5) - ld[i] + lp[i]
+  }
+
+  lpost.sum <- logsum(lpost.grid)
+  post.grid <- exp(lpost.grid - lpost.sum)
+  w         <- c(w.grid %*% post.grid)
+
+  return(list(w = w, lpost.sum = lpost.sum))
+}
+
+ppFn <- function(w.knot, A, R, ld, lp, L, nknots, ngrid, a.kap){
+  w.grid     <- matrix(NA, L, ngrid)
+  lpost.grid <- rep(NA, ngrid)
+  for(i in 1:ngrid){
+    r             <- sum.sq(backsolve(R[[i]], w.knot, transpose = TRUE))
+    w.grid[,i]    <- A[[i]] %*% w.knot
+    lpost.grid[i] <- logsum(-(nknots/2+a.kap[1,])*log1p(0.5*r/ a.kap[2,]) + a.kap[3,] + lgamma(a.kap[1,]+nknots/2)-lgamma(a.kap[1,])-.5*nknots*log(a.kap[2,])) - ld[i] + lp[i]
+  }
+
+  lpost.sum <- logsum(lpost.grid)
+  post.grid <- exp(lpost.grid - lpost.sum)
+
+  w <- c(w.grid %*% post.grid)
+  return(list(w = w, lpost.sum = lpost.sum))
+}
+
+
+estFn <- function(par, x, y, A, R, ld, lp,
+                  L, mid, nknots, ngrid, a.kap, a.sig,
+                  tau.g, reg.ix, reduce = TRUE,
+                  x.ce = 0, x.sc = 1, base.bundle){
+  n     <- length(y)
+  p     <- ncol(x)
+  q     <- ncol(y)
+
+  wKnot <- array(as.matrix(test$parsamp[1,grep("W", colnames(test$parsamp))]), dim=c(nknots,p+1,q))
+  w0    <- matrix(0, nrow=L, ncol=q)
+  wMat  <- array(0, dim=c(L, p, q))
+  zeta0.dot <- matrix(0, nrow=L, ncol=q)
+  zeta0  <- matrix(0, nrow=L, ncol=q)
+
+  # For each response variable i, calculate w functions:
+  for(i in 1:q){
+    w0[,i] <- ppFn0(wKnot[,1,i], A, R, ld, lp, L, nknots, ngrid)$w
+    wPP    <- apply(wKnot[,-1,i], 2, ppFn, A, R, ld, lp, L, nknots, ngrid, a.kap)
+
+    wMat[,,i]        <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
+    zeta0.dot[,i]    <- exp(w0[,i] - max(w0[,i]))
+
+    zeta0[-c(1,L),i]    <- trape(zeta0.dot[-c(1,L),i], tau.g[-c(1,L)], L-2)
+    zeta0.tot      <- zeta0[L-2,i]
+    zeta0[2:(L-1)] <- tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0[2:(L-1),i] / zeta0.tot
+    zeta0[L,i]     <- 1
+  }
+
+  zeta0     <- c(0, tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0 / zeta0.tot, 1)
+  zeta0.dot <- (tau.g[L-1]-tau.g[2])*zeta0.dot / zeta0.tot
+  zeta0.dot[c(1,L)] <- 0
+  zeta0.ticks <- pmin(L-1, pmax(1, sapply(zeta0, function(u) sum(tau.g <= u))))
+  zeta0.dists <- (zeta0 - tau.g[zeta0.ticks]) / (tau.g[zeta0.ticks+1] - tau.g[zeta0.ticks])
+  vMat      <- apply(wMat, 2, transform.grid, ticks = zeta0.ticks, dists = zeta0.dists)
+
+  reach <- nknots*(p+1)
+  gam0 <- par[reach + 1]; reach <- reach + 1
+  gam <- par[reach + 1:p]; reach <- reach + p
+  sigma <- sigFn(par[reach + 1], a.sig); reach <- reach + 1
+  nu <- nuFn(par[reach + 1]);
+
+  b0dot <- sigma * base.bundle$q0(zeta0, nu) * zeta0.dot
+  beta0.hat <- rep(NA, L)
+  beta0.hat[mid:L] <- gam0 + trape(b0dot[mid:L], tau.g[mid:L], L - mid + 1)
+  beta0.hat[mid:1] <- gam0 + trape(b0dot[mid:1], tau.g[mid:1], mid)
+
+  vNorm  <- sqrt(rowSums(vMat^2))
+  a      <- tcrossprod(vMat, x)
+  aX     <- apply(-a, 1, max)/vNorm
+  aX[is.nan(aX)] <- Inf
+  aTilde <- vMat / (aX * sqrt(1 + vNorm^2))
+  ab0    <- b0dot * aTilde
+
+  beta.hat <- kronecker(rep(1,L), t(gam))
+  beta.hat[mid:L,] <- beta.hat[mid:L,] + apply(ab0[mid:L,,drop=FALSE], 2, trape, h = tau.g[mid:L], len = L - mid + 1)
+  beta.hat[mid:1,] <- beta.hat[mid:1,] + apply(ab0[mid:1,,drop=FALSE], 2, trape, h = tau.g[mid:1], len = mid)
+  beta.hat <- beta.hat / x.sc
+  beta0.hat <- beta0.hat - rowSums(beta.hat * x.ce)
+  betas <- cbind(beta0.hat, beta.hat)
+  if(reduce) betas <- betas[reg.ix,,drop = FALSE]
+  return(betas)
+}
+
+
+coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
+                        plot = FALSE, show.intercept = TRUE, reduce = TRUE){
+  # Dimension parameters
+  n      <- object$dim[1]
+  p      <- object$dim[2]
+  q      <- object$dim[3]
+  L      <- object$dim[4]
+  mid    <- object$dim[5] + 1
+  nknots <- object$dim[6]
+  ngrid  <- object$dim[7]
+  niter  <- object$dim[9]
+  nsamp  <- object$dim[11]
+  pars   <- object$parsamp
+  ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
+
+  # Hyperparameters and data parameters
+  a.sig    <- object$hyperPar[1:2]
+  a.kap    <- matrix(object$hyper[-c(1:2)], nrow = 3)
+  tau.g    <- object$tau.g
+  reg.ix   <- object$reg.ix
+  x.center <- outer(rep(1, L), attr(object$x, "scaled:center"))
+  x.scale  <- outer(rep(1, L), attr(object$x, "scaled:scale"))
+
+}
 # coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
-#   niter <- object$dim[8]
-#   nsamp <- object$dim[10]
-#   pars <- matrix(object$parsamp, ncol = nsamp)
-#   ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
-#
-#   n <- object$dim[1]
-#   p <- object$dim[2]
-#   L <- object$dim[3]
-#   mid <- object$dim[4] + 1
-#   nknots <- object$dim[5]
-#   ngrid <- object$dim[6]
-#
-#   a.sig  <- object$hyper[1:2]
-#   a.kap  <- matrix(object$hyper[-c(1:2)], nrow = 3)
-#   tau.g  <- object$tau.g
-#   reg.ix <- object$reg.ix
-#   x.ce   <- outer(rep(1, L), attr(object$x, "scaled:center"))
-#   x.sc   <- outer(rep(1,L), attr(object$x, "scaled:scale"))
-#
+
 #   base.bundle <- list()
 #   if(object$fbase.choice == 1){
 #     base.bundle$q0 <- function(u, nu = Inf) return(1 / (dt(qt(unitFn(u), df = nu), df = nu) * qt(.9, df = nu)))
