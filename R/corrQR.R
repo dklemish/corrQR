@@ -434,8 +434,6 @@ corrQR <- function(x, y, sd, Rcorr,
   return(oo)
 }
 
-sum.sq <- function(x) return(sum(x^2))
-
 waic <- function(logliks, print = TRUE){
   lppd <- sum(apply(logliks, 1, logmean))
   p.waic.1 <- 2 * lppd - 2 * sum(apply(logliks, 1, mean))
@@ -446,7 +444,7 @@ waic <- function(logliks, print = TRUE){
   invisible(c(WAIC1 = waic.1, WAIC2 = waic.2))
 }
 
-
+sum.sq    <- function(x) return(sum(x^2))
 extract   <- function(lo, vn) return(lo[[vn]])
 lamFn     <- function(prox) return(sqrt(-100*log(prox)))
 nuFn      <- function(z) return(0.5 + 5.5*exp(z/2))
@@ -457,6 +455,11 @@ unitFn    <- function(u) return(pmin(1 - 1e-10, pmax(1e-10, u)))
 logmean   <- function(lx) return(max(lx) + log(mean(exp(lx - max(lx)))))
 logsum    <- function(lx) return(logmean(lx) + log(length(lx)))
 trape     <- function(x, h, len = length(x)) return(c(0, cumsum(.5 * (x[-1] + x[-len]) * (h[-1] - h[-len]))))
+transform.grid <- function(w, ticks, dists){return((1-dists) * w[ticks] + dists * w[ticks+1])}
+
+q0 <- function(u, nu = Inf) return(1 / (dt(qt(unitFn(u), df = nu), df = nu) * qt(.9, df = nu)))
+Q0 <- function(u, nu = Inf) return(qt(unitFn(u), df = nu) / qt(.9, df = nu))
+F0 <- function(x, nu = Inf) return(pt(x*qt(.9, df = nu), df = nu))
 
 klGP <- function(lam1, lam2, nknots = 11){
   # Determine KL divergence between two multivariate normals with mean zero and
@@ -552,69 +555,88 @@ ppFn <- function(w.knot, A, R, ld, lp, L, nknots, ngrid, a.kap){
 estFn <- function(par, x, y, A, R, ld, lp,
                   L, mid, nknots, ngrid, a.kap, a.sig,
                   tau.g, reg.ix, reduce = TRUE,
-                  x.ce = 0, x.sc = 1, base.bundle){
+                  x.ce = 0, x.sc = 1){
   n     <- length(y)
   p     <- ncol(x)
   q     <- ncol(y)
+  npar  <- (p+1) * (nknots+1) + 2
 
-  wKnot <- array(as.matrix(test$parsamp[1,grep("W", colnames(test$parsamp))]), dim=c(nknots,p+1,q))
+  wKnot <- array(as.matrix(par[1,grep("W", colnames(par))]), dim=c(nknots,p+1,q))
   w0    <- matrix(0, nrow=L, ncol=q)
   wMat  <- array(0, dim=c(L, p, q))
+  vMat  <- array(0, dim=c(L, p, q))
   zeta0.dot <- matrix(0, nrow=L, ncol=q)
   zeta0  <- matrix(0, nrow=L, ncol=q)
+  beta0.hat <- matrix(NA, nrow=L, ncol=q)
+  beta.hat <- array(NA, dim=c(L,p,q))
 
-  # For each response variable i, calculate w functions:
+  # For each response variable i:
   for(i in 1:q){
-    w0[,i] <- ppFn0(wKnot[,1,i], A, R, ld, lp, L, nknots, ngrid)$w
-    wPP    <- apply(wKnot[,-1,i], 2, ppFn, A, R, ld, lp, L, nknots, ngrid, a.kap)
+    # Interpolate values of w functions from values at knots
+    w0[,i]    <- ppFn0(wKnot[,1,i], A, R, ld, lp, L, nknots, ngrid)$w
+    wPP       <- apply(wKnot[,-1,i], 2, ppFn, A, R, ld, lp, L, nknots, ngrid, a.kap)
+    wMat[,,i] <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
 
-    wMat[,,i]        <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
+    # Calculate zeta function based on values of w0
     zeta0.dot[,i]    <- exp(w0[,i] - max(w0[,i]))
+    zeta0[-c(1,L),i] <- trape(zeta0.dot[-c(1,L),i], tau.g[-c(1,L)])
+    zeta0.tot        <- zeta0[L-1,i]
+    zeta0[2:(L-1),i] <- tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0[2:(L-1),i] / zeta0.tot
+    zeta0[L,i]       <- 1
+    zeta0.dot[,i]    <- (tau.g[L-1]-tau.g[2])*zeta0.dot[,i] / zeta0.tot
+    zeta0.dot[c(1,L),i] <- 0
 
-    zeta0[-c(1,L),i]    <- trape(zeta0.dot[-c(1,L),i], tau.g[-c(1,L)], L-2)
-    zeta0.tot      <- zeta0[L-2,i]
-    zeta0[2:(L-1)] <- tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0[2:(L-1),i] / zeta0.tot
-    zeta0[L,i]     <- 1
+    # Calculate values of w_j(zeta(tau)) functions (j=1,...,p) via interpolation
+    zeta0.ticks <- pmin(L-1,
+                        pmax(1,
+                             sapply(zeta0[,i], function(u) sum(tau.g <= u))))
+
+    zeta0.dists <- (zeta0[,i] - tau.g[zeta0.ticks]) / (tau.g[zeta0.ticks+1] - tau.g[zeta0.ticks])
+    vMat[,,i]   <- apply(wMat[,,i], 2, transform.grid, ticks = zeta0.ticks, dists = zeta0.dists)
+
+    # Read in other parameters
+    reach <- (i-1)*npar + (p+1)*nknots
+    gam0  <- unlist(par[reach + 1])
+    gam   <- unlist(par[reach + 2:(p+1)])
+    sigma <- unlist(sigFn(par[reach + p + 2], a.sig))
+    nu    <- unlist(nuFn(par[reach + p + 3]))
+
+    # Calculate estimated beta0 function
+    b0dot <- sigma * q0(zeta0[,i], nu) * zeta0.dot[,i]
+    beta0.hat[mid:L, i] <- gam0 + trape(b0dot[mid:L], tau.g[mid:L], L - mid + 1)
+    beta0.hat[mid:1, i] <- gam0 + trape(b0dot[mid:1], tau.g[mid:1], mid)
+
+    vNorm  <- sqrt(rowSums(vMat^2))
+    a      <- tcrossprod(vMat[,,i], x)
+    aX     <- apply(-a, 1, max)/vNorm
+    aX[is.nan(aX)] <- Inf
+    aTilde <- vMat[,,i] / (aX * sqrt(1 + vNorm^2))
+    ab0    <- b0dot * aTilde
+
+    beta.hat[,,i] <- kronecker(rep(1,L), t(gam))
+
+    beta.hat[mid:L,,i] <- beta.hat[mid:L,,i] +
+      apply(ab0[mid:L,,drop=FALSE], 2, trape, h = tau.g[mid:L], len = L - mid + 1)
+    beta.hat[mid:1,,i] <- beta.hat[mid:1,,i] +
+      apply(ab0[mid:1,,drop=FALSE], 2, trape, h = tau.g[mid:1], len = mid)
+
+    # Rescale functions to account for scaling & centering
+    beta.hat[,,i] <- beta.hat[,,i] / x.scale
+    beta0.hat[,i] <- beta0.hat[,i] - rowSums(beta.hat[,,i] * x.center)
   }
 
-  zeta0     <- c(0, tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0 / zeta0.tot, 1)
-  zeta0.dot <- (tau.g[L-1]-tau.g[2])*zeta0.dot / zeta0.tot
-  zeta0.dot[c(1,L)] <- 0
-  zeta0.ticks <- pmin(L-1, pmax(1, sapply(zeta0, function(u) sum(tau.g <= u))))
-  zeta0.dists <- (zeta0 - tau.g[zeta0.ticks]) / (tau.g[zeta0.ticks+1] - tau.g[zeta0.ticks])
-  vMat      <- apply(wMat, 2, transform.grid, ticks = zeta0.ticks, dists = zeta0.dists)
+  betas <- array(0, dim=c(L, p+1, q))
+  betas[,1,]  <- beta0.hat
+  betas[,-1,] <- beta.hat
 
-  reach <- nknots*(p+1)
-  gam0 <- par[reach + 1]; reach <- reach + 1
-  gam <- par[reach + 1:p]; reach <- reach + p
-  sigma <- sigFn(par[reach + 1], a.sig); reach <- reach + 1
-  nu <- nuFn(par[reach + 1]);
-
-  b0dot <- sigma * base.bundle$q0(zeta0, nu) * zeta0.dot
-  beta0.hat <- rep(NA, L)
-  beta0.hat[mid:L] <- gam0 + trape(b0dot[mid:L], tau.g[mid:L], L - mid + 1)
-  beta0.hat[mid:1] <- gam0 + trape(b0dot[mid:1], tau.g[mid:1], mid)
-
-  vNorm  <- sqrt(rowSums(vMat^2))
-  a      <- tcrossprod(vMat, x)
-  aX     <- apply(-a, 1, max)/vNorm
-  aX[is.nan(aX)] <- Inf
-  aTilde <- vMat / (aX * sqrt(1 + vNorm^2))
-  ab0    <- b0dot * aTilde
-
-  beta.hat <- kronecker(rep(1,L), t(gam))
-  beta.hat[mid:L,] <- beta.hat[mid:L,] + apply(ab0[mid:L,,drop=FALSE], 2, trape, h = tau.g[mid:L], len = L - mid + 1)
-  beta.hat[mid:1,] <- beta.hat[mid:1,] + apply(ab0[mid:1,,drop=FALSE], 2, trape, h = tau.g[mid:1], len = mid)
-  beta.hat <- beta.hat / x.sc
-  beta0.hat <- beta0.hat - rowSums(beta.hat * x.ce)
-  betas <- cbind(beta0.hat, beta.hat)
-  if(reduce) betas <- betas[reg.ix,,drop = FALSE]
+  if(reduce) betas <- betas[reg.ix,,]
   return(betas)
 }
 
 
 coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
-                        plot = FALSE, show.intercept = TRUE, reduce = TRUE){
+                        plot = FALSE, show.intercept = TRUE, reduce = TRUE,
+                        co="blue", alp=0.3, nr=4, nc=4){
   # Dimension parameters
   n      <- object$dim[1]
   p      <- object$dim[2]
@@ -629,34 +651,57 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
   ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
 
   # Hyperparameters and data parameters
-  a.sig    <- object$hyperPar[1:2]
+  a.sig    <- object$hyper[1:2]
   a.kap    <- matrix(object$hyper[-c(1:2)], nrow = 3)
   tau.g    <- object$tau.g
   reg.ix   <- object$reg.ix
   x.center <- outer(rep(1, L), attr(object$x, "scaled:center"))
   x.scale  <- outer(rep(1, L), attr(object$x, "scaled:scale"))
 
+  beta.samp <- array(NA, dim=c(length(reg.ix),p+1,q,length(ss)))
+  for(i in 1:length(ss)){
+    beta.samp[,,,i] <- estFn(pars[ss[i],-1],
+                             object$x, object$y,
+                             object$A, object$R, object$log.det, object$lp.grid,
+                             L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix,
+                             reduce, x.center, x.scale)
+  }
+
+  if(reduce){
+    tau.g <- tau.g[reg.ix]
+    L     <- length(tau.g)
+  }
+
+  if(plot == TRUE){
+    for(i in 1:q){
+      b.median <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.5)))
+      b.low    <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.025)))
+      b.high   <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.975)))
+
+      colnames(b.median) <- c("Tau", "Intercept", object$xnames)
+      colnames(b.low)    <- c("Tau", "Intercept", object$xnames)
+      colnames(b.high)   <- c("Tau", "Intercept", object$xnames)
+
+      pl <- lapply(2:(p+2), function(.x)
+        ggplot(b.median, aes(x=Tau)) +
+          geom_line(aes(y=b.median[,.x])) +
+          geom_ribbon(aes(ymin=b.low[,.x], ymax=b.high[,.x]), fill=co, alpha = alp) +
+          theme_bw() +
+          xlab(expression(tau)) +
+          ylab(colnames(b.median)[.x])
+      )
+      ml <- marrangeGrob(pl,
+                         nrow=nr, ncol=nc,
+                         top=object$ynames[i])
+      print(ml)
+    }
+  }
+
+
 }
 # coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
 
-#   base.bundle <- list()
-#   if(object$fbase.choice == 1){
-#     base.bundle$q0 <- function(u, nu = Inf) return(1 / (dt(qt(unitFn(u), df = nu), df = nu) * qt(.9, df = nu)))
-#     base.bundle$Q0 <- function(u, nu = Inf) return(qt(unitFn(u), df = nu) / qt(.9, df = nu))
-#     base.bundle$F0 <- function(x, nu = Inf) return(pt(x*qt(.9, df = nu), df = nu))
-#   } else {
-#     base.bundle$q0 <- function(u, nu = Inf) return(1 / (dunif(qunif(u, -1,1), -1,1)))
-#     base.bundle$Q0 <- function(u, nu = Inf) return(qunif(u, -1,1))
-#     base.bundle$F0 <- function(x, nu = Inf) return(punif(x, -1,1))
-#   }
-#
-#   beta.samp <- apply(pars[,ss],
-#                      2,
-#                      function(p1)
-#                        c(estFn(p1, object$x, object$y, object$gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce, x.ce, x.sc, base.bundle)))
-#
-#   if(reduce) tau.g <- tau.g[reg.ix]
-#   L <- length(tau.g)
+
 #
 #   if(plot){
 #     nr <- ceiling(sqrt(p+show.intercept))
