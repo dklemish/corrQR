@@ -2,6 +2,8 @@ exportPattern("^[[:alpha:]]+")
 
 useDynLib(corrQR)
 
+S3method(coef, corrQR)
+
 importFrom(qrjoint, qrjoint)
 importFrom(qrjoint, chull.center)
 importFrom(Rcpp, evalCpp)

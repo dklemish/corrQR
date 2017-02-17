@@ -555,7 +555,7 @@ ppFn <- function(w.knot, A, R, ld, lp, L, nknots, ngrid, a.kap){
 estFn <- function(par, x, y, A, R, ld, lp,
                   L, mid, nknots, ngrid, a.kap, a.sig,
                   tau.g, reg.ix, reduce = TRUE,
-                  x.ce = 0, x.sc = 1){
+                  x.center = 0, x.scale = 1){
   n     <- length(y)
   p     <- ncol(x)
   q     <- ncol(y)
@@ -696,8 +696,6 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
       print(ml)
     }
   }
-
-
 }
 # coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
 
