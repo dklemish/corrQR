@@ -635,7 +635,7 @@ estFn <- function(par, x, y, A, R, ld, lp,
 
 
 coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
-                        plot = FALSE, show.intercept = TRUE, reduce = TRUE,
+                        plotBeta = TRUE, reduce = TRUE,
                         co="blue", alp=0.3, nr=4, nc=4){
   # Dimension parameters
   n      <- object$dim[1]
@@ -672,23 +672,39 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
     L     <- length(tau.g)
   }
 
-  if(plot == TRUE){
+  b.median <- list()
+  b.low    <- list()
+  b.high   <- list()
+  for(i in 1:q){
+    b.median[[i]] <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.5)))
+    b.low[[i]]    <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.025)))
+    b.high[[i]]   <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.975)))
+
+    colnames(b.median[[i]]) <- c("Tau", "Intercept", object$xnames)
+    colnames(b.low[[i]])    <- c("Tau", "Intercept", object$xnames)
+    colnames(b.high[[i]])   <- c("Tau", "Intercept", object$xnames)
+  }
+  names(b.median) <- object$ynames
+  names(b.low) <- object$ynames
+  names(b.high) <- object$ynames
+
+  beta.est <- list(b.median, b.low, b.high)
+  names(beta.est) <- c("Median", "Low", "High")
+
+  if(plotBeta == TRUE){
     for(i in 1:q){
-      b.median <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.5)))
-      b.low    <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.025)))
-      b.high   <- as.data.frame(cbind(tau.g, apply(beta.samp[,,i,], c(1,2), quantile, 0.975)))
-
-      colnames(b.median) <- c("Tau", "Intercept", object$xnames)
-      colnames(b.low)    <- c("Tau", "Intercept", object$xnames)
-      colnames(b.high)   <- c("Tau", "Intercept", object$xnames)
-
       pl <- lapply(2:(p+2), function(.x)
-        ggplot(b.median, aes(x=Tau)) +
-          geom_line(aes(y=b.median[,.x])) +
-          geom_ribbon(aes(ymin=b.low[,.x], ymax=b.high[,.x]), fill=co, alpha = alp) +
+        ggplot(b.median[[i]][-c(1,L),], aes(x=Tau)) +
+          geom_line(aes(y=b.median[[i]][-c(1,L),.x])) +
+          geom_ribbon(aes(ymin=b.low[[i]][-c(1,L),.x],
+                          ymax=b.high[[i]][-c(1,L),.x]),
+                      fill=co, alpha = alp) +
           theme_bw() +
-          xlab(expression(tau)) +
-          ylab(colnames(b.median)[.x])
+          labs(x=expression(tau),
+               y="Coefficient",
+               title=colnames(b.median[[i]])[.x])
+          # xlab(expression(tau)) +
+          # ylab(colnames(b.median[[i]])[.x])
       )
       ml <- marrangeGrob(pl,
                          nrow=nr, ncol=nc,
@@ -696,6 +712,9 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
       print(ml)
     }
   }
+
+  invisible(list(beta.samp=beta.samp, beta.est=beta.est))
+
 }
 # coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
 

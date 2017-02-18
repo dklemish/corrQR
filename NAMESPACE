@@ -4,6 +4,9 @@ useDynLib(corrQR)
 
 S3method(coef, corrQR)
 
+import(ggplot2)
+import(gridExtra)
+
 importFrom(qrjoint, qrjoint)
 importFrom(qrjoint, chull.center)
 importFrom(Rcpp, evalCpp)
