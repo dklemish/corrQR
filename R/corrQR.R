@@ -1,9 +1,7 @@
 corrQR <- function(x, y, sd, Rcorr,
                    nsamp = 1e3, thin = 10,
                    incr = 0.01,
-                   #initPar = "prior",
-                   ip,
-                   #copula = "gaussian",
+                   ip = NULL,
                    nknots = 6,
                    hyper = list(sig = c(.1,.1),
                                 lam = c(6,4),
@@ -14,7 +12,7 @@ corrQR <- function(x, y, sd, Rcorr,
                    blocking = "by.response",
                    expo = 2,
                    blocks.mu, blocks.S,
-                   fix.nu = FALSE, fix.corr = TRUE){
+                   fix.nu = FALSE, fix.corr = FALSE){
   # Input parameters:
   #  x - Predictors (n by p matrix)
   #  y - Response (n by q matrix)
@@ -200,23 +198,23 @@ corrQR <- function(x, y, sd, Rcorr,
   #  Copula parameters
   #    q*npar + 1:ncorr = copula parameters
 
-  par <- rep(0, tot.par)
-
   set.seed(sd)
 
   # Initialize w functions, gamma0, gamma, sigma & nu
-  # if(initPar == "prior"){
-  #   for(j in 1:q){
-  #     suppressWarnings(
-  #       invis <- capture.output(
-  #         par[(j-1)*npar + 1:npar] <-
-  #           qrjoint(x, y[,j], nsamp = 100, thin=1)$par
-  #       )
-  #     )
-  #   }
-  # }else if(initPar == "user"){
-  par <- ip
-  # }
+  par <- rep(0, tot.par)
+
+  if(is.null(ip)){
+    for(j in 1:q){
+      suppressWarnings(
+        invis <- capture.output(
+          par[(j-1)*npar + 1:npar] <-
+            qrjoint(x, y[,j], nsamp = 100, thin=1)$par
+        )
+      )
+    }
+  }else{
+    par <- ip
+  }
 
   # Build list that contains which indices of parameter vector
   # should be updated in each block update in each MCMC iteration
@@ -703,8 +701,8 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
           labs(x=expression(tau),
                y="Coefficient",
                title=colnames(b.median[[i]])[.x])
-          # xlab(expression(tau)) +
-          # ylab(colnames(b.median[[i]])[.x])
+        # xlab(expression(tau)) +
+        # ylab(colnames(b.median[[i]])[.x])
       )
       ml <- marrangeGrob(pl,
                          nrow=nr, ncol=nc,
@@ -716,125 +714,3 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
   invisible(list(beta.samp=beta.samp, beta.est=beta.est))
 
 }
-# coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
-
-
-#
-#   if(plot){
-#     nr <- ceiling(sqrt(p+show.intercept))
-#     nc <- ceiling((p+show.intercept)/nr)
-#     par(mfrow = c(nr, nc))
-#   }
-#
-#   reach <- 0
-#   beta.hat <- list()
-#   plot.titles <- c("Intercept", object$xnames)
-#   j <- 1
-#   b <- beta.samp[reach + 1:L,]
-#
-#   beta.hat[[j]] <-
-#     getBands(b, plot = (plot & show.intercept),
-#              add = FALSE,
-#              x = tau.g,
-#              xlab = "tau",
-#              ylab = "Coefficient", bty = "n", ...)
-#
-#   if(plot & show.intercept) title(main = plot.titles[j])
-#
-#   reach <- reach + L
-#
-#   for(j in 2:(p+1)){
-#     b <- beta.samp[reach + 1:L,]
-#     beta.hat[[j]] <-
-#       getBands(b, plot = plot,
-#                add = FALSE,
-#                x = tau.g,
-#                xlab = "tau",
-#                ylab = "Coefficient", bty = "n", ...)
-#     if(plot) {
-#       title(main = plot.titles[j])
-#       abline(h = 0, lty = 2, col = 4)
-#     }
-#
-#     reach <- reach + L
-#   }
-#
-#   names(beta.hat) <- plot.titles
-#
-#   invisible(list(beta.samp = beta.samp, beta.est = beta.hat))
-# }
-
-# getBands <- function(b, col = 2, lwd = 1,
-#                      plot = TRUE, add = FALSE,
-#                      x = seq(0,1,len=nrow(b)), remove.edges = TRUE, ...){
-#
-#   colRGB   <- col2rgb(col)/255
-#   colTrans <- rgb(colRGB[1], colRGB[2], colRGB[3], alpha = 0.2)
-#
-#   b.med <- apply(b, 1, quantile, pr = .5)
-#   b.lo <- apply(b, 1, quantile, pr = .025)
-#   b.hi <- apply(b, 1, quantile, pr = 1 - .025)
-#
-#   L <- nrow(b)
-#   ss <- 1:L; ss.rev <- L:1
-#
-#   if(remove.edges){
-#     ss <- 2:(L-1); ss.rev <- (L-1):2
-#   }
-#   if(plot){
-#     if(!add)
-#       plot(x[ss], b.med[ss], ty = "n", ylim = range(c(b.lo[ss], b.hi[ss])), ...)
-#
-#     polygon(x[c(ss, ss.rev)], c(b.lo[ss], b.hi[ss.rev]), col = colTrans, border = colTrans)
-#     lines(x[ss], b.med[ss], col = col, lwd = lwd)
-#   }
-#   invisible(cbind(b.lo, b.med, b.hi))
-# }
-
-# estFn <- function(par, x, y, gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce = TRUE, x.ce = 0, x.sc = 1, base.bundle){
-#
-#   n <- length(y)
-#   p <- ncol(x)
-#   wKnot <- matrix(par[1:(nknots*(p+1))], nrow = nknots)
-#   w0PP  <- ppFn0(wKnot[,1], gridmats, L, nknots, ngrid)
-#   w0    <- w0PP$w
-#   wPP   <- apply(wKnot[,-1,drop=FALSE], 2, ppFn, gridmats = gridmats, L = L, nknots = nknots, ngrid = ngrid, a.kap = a.kap)
-#   wMat  <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
-#
-#   zeta0.dot <- exp(shrinkFn(p) * (w0 - max(w0)))
-#   zeta0     <- trape(zeta0.dot[-c(1,L)], tau.g[-c(1,L)], L-2)
-#   zeta0.tot <- zeta0[L-2]
-#   zeta0     <- c(0, tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0 / zeta0.tot, 1)
-#   zeta0.dot <- (tau.g[L-1]-tau.g[2])*zeta0.dot / zeta0.tot
-#   zeta0.dot[c(1,L)] <- 0
-#   zeta0.ticks <- pmin(L-1, pmax(1, sapply(zeta0, function(u) sum(tau.g <= u))))
-#   zeta0.dists <- (zeta0 - tau.g[zeta0.ticks]) / (tau.g[zeta0.ticks+1] - tau.g[zeta0.ticks])
-#   vMat      <- apply(wMat, 2, transform.grid, ticks = zeta0.ticks, dists = zeta0.dists)
-#
-#   reach <- nknots*(p+1)
-#   gam0 <- par[reach + 1]; reach <- reach + 1
-#   gam <- par[reach + 1:p]; reach <- reach + p
-#   sigma <- sigFn(par[reach + 1], a.sig); reach <- reach + 1
-#   nu <- nuFn(par[reach + 1]);
-#
-#   b0dot <- sigma * base.bundle$q0(zeta0, nu) * zeta0.dot
-#   beta0.hat <- rep(NA, L)
-#   beta0.hat[mid:L] <- gam0 + trape(b0dot[mid:L], tau.g[mid:L], L - mid + 1)
-#   beta0.hat[mid:1] <- gam0 + trape(b0dot[mid:1], tau.g[mid:1], mid)
-#
-#   vNorm  <- sqrt(rowSums(vMat^2))
-#   a      <- tcrossprod(vMat, x)
-#   aX     <- apply(-a, 1, max)/vNorm
-#   aX[is.nan(aX)] <- Inf
-#   aTilde <- vMat / (aX * sqrt(1 + vNorm^2))
-#   ab0    <- b0dot * aTilde
-#
-#   beta.hat <- kronecker(rep(1,L), t(gam))
-#   beta.hat[mid:L,] <- beta.hat[mid:L,] + apply(ab0[mid:L,,drop=FALSE], 2, trape, h = tau.g[mid:L], len = L - mid + 1)
-#   beta.hat[mid:1,] <- beta.hat[mid:1,] + apply(ab0[mid:1,,drop=FALSE], 2, trape, h = tau.g[mid:1], len = mid)
-#   beta.hat <- beta.hat / x.sc
-#   beta0.hat <- beta0.hat - rowSums(beta.hat * x.ce)
-#   betas <- cbind(beta0.hat, beta.hat)
-#   if(reduce) betas <- betas[reg.ix,,drop = FALSE]
-#   return(betas)
-# }
