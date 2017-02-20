@@ -43,7 +43,7 @@ double logPosterior(const vec &, bool llonly);
 double log_dGaussCopula(const mat &, const mat &);
 
 void MCMC(void);
-void MCMC_corr(void);
+mat rInvWish(const double, const mat &);
 
 SEXP corr_qr_fit(SEXP par_,
                  SEXP x_,
@@ -323,12 +323,7 @@ SEXP corr_qr_fit(SEXP par_,
   }
   Rcorr = symmatu(Rcorr);
 
-  if(fix_corr == FALSE){
-    MCMC_corr();
-  }
-  else{
-    MCMC();
-  }
+  MCMC();
 
   return Rcpp::List::create(Rcpp::Named("parsamp") = parStore.t(),
                             Rcpp::Named("lpsamp") = lpSample,
@@ -806,160 +801,6 @@ void MCMC(void){
   std::vector<vec>  par_incr(nblocks);
   std::vector<mat>  R(nblocks); // Chol factor of MCMC block proposal covariances
 
-  // Initialize variables
-  for(b=0; b < nblocks; b++){
-    // Dynamically allocate ragged arrays
-    currBlockSize   = blockSizes[b];
-
-    R[b]            = mat(currBlockSize, currBlockSize);
-    blocks_pivot[b] = ivec(currBlockSize);
-    parbar_chunk[b] = vec(currBlockSize, arma::fill::zeros);
-    zsamp[b]        = vec(currBlockSize, arma::fill::zeros);
-    par_incr[b]     = vec(currBlockSize, arma::fill::zeros);
-
-    chunk_size[b] = 0;
-    acpt_chunk[b] = 0.0;
-
-    R[b] = arma::chol(S[b], "upper");
-    frac[b] = sqrt(1.0 / ((double) refresh_counter[b] + 1.0));
-  }
-
-  GetRNGstate();
-
-  // Use Rcpp sugar random number generation functions
-  // Pre-allocate random numbers used in MCMC to speed execution
-  //  at cost of increased memory
-  logUniform = arma::log(as<arma::vec>(runif(logUniform.size())));
-  gammaAdj   = as<arma::vec>(rgamma(gammaAdj.size(), 3.0, 1.0));
-
-  parStore.col(0) = parSample;
-  lpval = logPosterior(parSample, FALSE);
-  if(verbose) Rcout << "Initial lp = " << lpval << std::endl;
-
-  // Adaptive Metropolis MCMC
-  for(iter = 0; iter < niter; iter++){
-    // Model parameters other than copula parameters
-    for(b = 0; b < nblocks; b++){
-      // Sample new parameters for variables in block b
-      currBlockSize = blockSizes[b];
-      chunk_size[b]++;
-
-      zsamp[b]      = as<arma::vec>(rnorm(currBlockSize)); // Use Rcpp sugar rnorm
-      par_incr[b]   = trimatu(R[b]) * zsamp[b];
-      lambda        = lm[b] * sqrt(3.0 / gammaAdj[g++]);
-
-      parOld = parSample;
-      parSample.elem(blocks[b]) += lambda * par_incr[b];
-
-      // Evaluate loglikelihood at proposed parameters
-      lpvalnew = logPosterior(parSample, FALSE);
-      lp_diff  = lpvalnew - lpval;
-
-      alpha[b] = exp(lp_diff);
-      if(alpha[b] > 1.0)  alpha[b] = 1.0;
-      if(isnan(alpha[b])) alpha[b] = 0.0;
-
-      // Check for acceptance
-      if(logUniform[u++] < lp_diff){
-        // Accept
-        lpval = lpvalnew;
-      }
-      else{
-        // Reject
-        parSample = parOld;
-      }
-
-      alpha_run[b] = ((double)run_counter[b] * alpha_run[b] + alpha[b]) / ((double)run_counter[b] + 1.0);
-      run_counter[b]++;
-    }
-
-    // Store results at appropriate iterations
-    if((iter+1) % thin == 0){
-      lpSample[store_lp++]           = lpval;
-      parStore.col(store_par++)      = parSample;
-      acceptSample.row(store_acpt++) = alpha.t();
-    }
-
-    // Output status updates for users
-    if(verbose){
-      if(niter < ticker || (iter+1) % (niter / ticker) == 0){
-        Rcout << "iter = " << iter + 1 << ", lp = " << lpval << std::endl;
-        alpha_run.t().print("alpha_run");
-
-        alpha_run.zeros();  // reinit to 0 for each block
-        run_counter.zeros();
-      }
-    }
-
-    // Adapt covariance matrices for proposal distributions for each block
-    for(b=0; b < nblocks; b++){
-      chs = std::max((double) chunk_size[b], 1.0);
-
-      acpt_chunk[b]   = acpt_chunk[b] + (alpha[b] - acpt_chunk[b]) / chs;
-      parbar_chunk[b] = parbar_chunk[b] + (parSample.elem(blocks[b]) - parbar_chunk[b]) / chs;
-
-      if(chunk_size[b] == refresh * blockSizes[b]){
-        refresh_counter[b]++;
-        frac[b] = sqrt(1.0 / ((double) refresh_counter[b] + 1.0));
-
-        for(i = 0; i < blockSizes[b]; i++){
-          for(j = 0; j < i; j++){
-            S[b].at(i,j) = (1.0 - frac[b]) * S[b].at(i,j) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][j] - mu[b][j]);
-            S[b].at(j,i) = S[b].at(i,j);
-          }
-          S[b].at(i,i) = (1.0 - frac[b]) * S[b].at(i,i) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][i] - mu[b][i]);
-        }
-        R[b]  = arma::chol(S[b], "upper");
-
-        mu[b] = mu[b] + frac[b] * (parbar_chunk[b] - mu[b]);
-        lm[b] = lm[b] * exp(frac[b] * (acpt_chunk[b] - acpt_target[b]));
-
-        acpt_chunk[b] = 0;
-        parbar_chunk[b].zeros();
-        chunk_size[b] = 0;
-      }
-    }
-  }
-  PutRNGstate();
-}
-
-void MCMC_corr(void){
-  int b, i, j;
-  int u = 0;
-  int g = 0;
-  int iter;
-  int store_lp=0;
-  int store_par=0;
-  int store_acpt=0;
-  int currBlockSize=0;
-
-  double lpval = 0;
-  double lpvalnew = 0;
-  double lp_diff;
-  double chs;
-  double lambda;
-
-  ivec blocks_rank(nblocks);
-  ivec run_counter(nblocks, arma::fill::zeros);
-  vec  alpha(nblocks);
-  vec  alpha_run(nblocks, arma::fill::zeros);
-
-  vec  blocks_d(npar);
-  vec  parOld(npar);
-  vec  logUniform(nblocks*niter);
-
-  ivec chunk_size(nblocks, arma::fill::zeros);
-  vec  acpt_chunk(nblocks, arma::fill::zeros);
-  vec  frac(nblocks);
-  vec  gammaAdj(nblocks*niter);
-
-  // Ragged arrays
-  std::vector<ivec> blocks_pivot(nblocks);
-  std::vector<vec>  parbar_chunk(nblocks);
-  std::vector<vec>  zsamp(nblocks);
-  std::vector<vec>  par_incr(nblocks);
-  std::vector<mat>  R(nblocks); // Chol factor of MCMC block proposal covariances
-
   // Data structures for sampling correlation matrices
   mat R_inv(q, q, arma::fill::zeros);
   vec alpha_samp(q, arma::fill::zeros);
@@ -1036,22 +877,23 @@ void MCMC_corr(void){
       run_counter[b]++;
     }
 
-    // Sample new correlation matrix
-    R_inv      = arma::inv_sympd(Rcorr);
-    alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
-    D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
-    D_inv      = arma::inv(D);
-    eps_star   = D * tau_y_x.t();
-    S_samp     = eps_star * eps_star.t();
-    Sigma      = sampleInvWish(n + q + 1, S_samp);
-    D_inv      = diagmat(pow(Sigma.diag(), -0.5));
-    Rcorr      = D_inv * Sigma * D_inv;
-
+    if(!fix_corr){
+      // Sample new correlation matrix
+      R_inv      = arma::inv_sympd(Rcorr);
+      alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
+      D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
+      D_inv      = arma::inv(D);
+      eps_star   = D * tau_y_x.t();
+      S_samp     = eps_star * eps_star.t();
+      Sigma      = rInvWish(n + q + 1, S_samp);
+      D_inv      = diagmat(pow(Sigma.diag(), -0.5));
+      Rcorr      = D_inv * Sigma * D_inv;
+    }
     // Store results at appropriate iterations
     if((iter+1) % thin == 0){
       for(i=0; i < q-1; i++){
         for(j=i+1; j < q; j++){
-          parSample[] = Rcorr.at(i,j);
+          parSample.at(nrespar + i*q + j) = Rcorr.at(i,j);
         }
       }
       lpSample[store_lp++]           = lpval;
@@ -1100,4 +942,24 @@ void MCMC_corr(void){
     }
   }
   PutRNGstate();
+}
+
+mat rInvWish(const double nu, const mat &S){
+  int i, j;
+
+  mat L = chol(inv(S));
+  mat A = mat(q, q, arma::fill::zeros);
+
+  for(i = 0; i < q; i++){
+    A.at(i,i) = sqrt(as<double>(rchisq(1, nu-i)));
+  }
+
+  // Memory access is faster going in column order
+  for(j = 0; j < q; j++){
+    for(i = j+1; i < q; i++){
+      A.at(i, j) = as<double>(rnorm(1, 0 ,1));
+    }
+  }
+
+  return inv(L * A * (L*A).t());
 }
