@@ -889,11 +889,12 @@ void MCMC(void){
       D_inv      = diagmat(pow(Sigma.diag(), -0.5));
       Rcorr      = D_inv * Sigma * D_inv;
     }
+
     // Store results at appropriate iterations
     if((iter+1) % thin == 0){
       for(i=0; i < q-1; i++){
         for(j=i+1; j < q; j++){
-          parSample.at(nrespar + i*q + j) = Rcorr.at(i,j);
+          parSample.at(nrespar + i*q + j - 1) = Rcorr.at(i,j);
         }
       }
       lpSample[store_lp++]           = lpval;
