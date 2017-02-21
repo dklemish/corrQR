@@ -329,7 +329,8 @@ SEXP corr_qr_fit(SEXP par_,
                             Rcpp::Named("lpsamp") = lpSample,
                             Rcpp::Named("acptsamp") = acceptSample,
                             Rcpp::Named("blockMu") = mu,
-                            Rcpp::Named("blockCov") = S);
+                            Rcpp::Named("blockCov") = S,
+                            Rcpp::Named("tau_y_x") = tau_y_x);
 }
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
@@ -802,13 +803,22 @@ void MCMC(void){
   std::vector<mat>  R(nblocks); // Chol factor of MCMC block proposal covariances
 
   // Data structures for sampling correlation matrices
-  mat R_inv(q, q, arma::fill::zeros);
-  vec alpha_samp(q, arma::fill::zeros);
   mat D(q, q, arma::fill::zeros);
-  mat D_inv(q, q, arma::fill::zeros);
-  mat eps_star(q, n, arma::fill::zeros);
   mat S_samp(q, q, arma::fill::zeros);
   mat Sigma(q, q, arma::fill::zeros);
+  mat D_inv(q, q, arma::fill::zeros);
+
+  // Liu & Daniels
+  // mat epsilon(n, q);
+  // mat R_prop(q,q);
+  // double log_det_current;
+  // double log_det_proposed;
+  // double accept_prob;
+
+  // Barnard et. al
+  mat R_inv(q, q, arma::fill::zeros);
+  vec alpha_samp(q, arma::fill::zeros);
+  mat eps_star(q, n, arma::fill::zeros);
 
   // Initialize variables
   for(b=0; b < nblocks; b++){
@@ -839,6 +849,8 @@ void MCMC(void){
   parStore.col(0) = parSample;
   lpval = logPosterior(parSample, FALSE);
   if(verbose) Rcout << "Initial lp = " << lpval << std::endl;
+
+  // log_det_current = log(det(Rcorr));
 
   // Adaptive Metropolis MCMC
   for(iter = 0; iter < niter; iter++){
@@ -879,15 +891,47 @@ void MCMC(void){
 
     if(!fix_corr){
       // Sample new correlation matrix
+
+      // Liu & Daniels
+      // for(i=0; i < q; i++){
+      //   for(j=0; j < n; j++){
+      //     D.at(i,i) += pow(tau_y_x.at(j,i),2);
+      //   }
+      // }
+      // epsilon = tau_y_x * D;
+      //
+      // for(j=0; j < n; j++){
+      //   S_samp += epsilon.row(j).t() * epsilon.row(j);
+      // }
+      // Sigma  = rInvWish(n, S_samp);
+      // D_inv  = diagmat(pow(Sigma.diag(), -0.5));
+      // R_prop = D_inv * Sigma * D_inv;
+      // log_det_proposed = log(det(R_prop));
+      // accept_prob = std::min(1.0, exp(-((q+1)/2) * (log_det_proposed - log_det_current)));
+      // if(as<double>(runif(1)) < accept_prob){
+      //   Rcorr = R_prop;
+      //   log_det_current = log_det_proposed;
+      // }
+
+      // Barnard et al.
       R_inv      = arma::inv_sympd(Rcorr);
+      R_inv.print("R_inv");
       alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
+      alpha_samp.t().print("alpha_samp");
       D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
+      D.print("D");
       D_inv      = arma::inv(D);
+      D_inv.print("D_inv");
       eps_star   = D * tau_y_x.t();
+      eps_star.print("eps_star");
       S_samp     = eps_star * eps_star.t();
+      S_samp.print("S_samp");
       Sigma      = rInvWish(n + q + 1, S_samp);
+      Sigma.print("Sigma");
       D_inv      = diagmat(pow(Sigma.diag(), -0.5));
+      D_inv.print("D_inv");
       Rcorr      = D_inv * Sigma * D_inv;
+      Rcorr.print("Rcorr");
     }
 
     // Store results at appropriate iterations
