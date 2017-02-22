@@ -819,6 +819,8 @@ void MCMC(void){
   mat R_inv(q, q, arma::fill::zeros);
   vec alpha_samp(q, arma::fill::zeros);
   mat eps_star(q, n, arma::fill::zeros);
+  mat Z(n, q);
+  double z;
 
   // Initialize variables
   for(b=0; b < nblocks; b++){
@@ -914,24 +916,37 @@ void MCMC(void){
       // }
 
       // Barnard et al.
+      for(i = 0; i < n; i++){
+        for(j = 0; j < q; j++){
+          z = R::qnorm(tau_y_x.at(i,j), 0.0, 1.0, 1, 0);
+          if(z == std::numeric_limits<double>::infinity()){
+            z = 10;
+          }
+          else if(z == -std::numeric_limits<double>::infinity()){
+            z = -10;
+          }
+          Z.at(i,j) = z;
+        }
+      }
+      // Z.print("Z");
       R_inv      = arma::inv_sympd(Rcorr);
-      R_inv.print("R_inv");
+      // R_inv.print("R_inv");
       alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
-      alpha_samp.t().print("alpha_samp");
+      // alpha_samp.t().print("alpha_samp");
       D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
-      D.print("D");
+      // D.print("D");
       D_inv      = arma::inv(D);
-      D_inv.print("D_inv");
-      eps_star   = D * tau_y_x.t();
-      eps_star.print("eps_star");
+      // D_inv.print("D_inv");
+      eps_star   = D * Z.t();
+      // eps_star.print("eps_star");
       S_samp     = eps_star * eps_star.t();
-      S_samp.print("S_samp");
+      // S_samp.print("S_samp");
       Sigma      = rInvWish(n + q + 1, S_samp);
-      Sigma.print("Sigma");
+      // Sigma.print("Sigma");
       D_inv      = diagmat(pow(Sigma.diag(), -0.5));
-      D_inv.print("D_inv");
+      // D_inv.print("D_inv");
       Rcorr      = D_inv * Sigma * D_inv;
-      Rcorr.print("Rcorr");
+      // Rcorr.print("Rcorr");
     }
 
     // Store results at appropriate iterations
