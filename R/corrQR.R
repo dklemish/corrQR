@@ -399,11 +399,10 @@ corrQR <- function(x, y, sd, Rcorr,
   oo$dmcmcpar <- dmcmc.par
   oo$runtime  <- tm.cpp[3]
 
-  samples <- as.data.frame(cbind(1:nsamp, oo$parsamp))
+  samples  <- as.data.frame(oo$parsamp)
   parnames <- colnames(samples)
 
-  parnames[1] <- "Iter"
-  reach       <- 2
+  reach <- 1
 
   for(i in 1:q){
     for(j in 0:p){
@@ -509,10 +508,12 @@ trace.plot <- function(object){
   npar    <- (nknots+1) * (p+1) + 2
   totpar  <- npar*q + ncorr
 
+  pars <- cbind(1:nrow(object$parsamp), object$parsamp)
+  colnames(pars)[1] <- "Iter"
   pl <- lapply(2:(totpar+1), function(.x)
-    ggplot(object$parsamp, aes(x=Iter, y=object$parsamp[,.x])) +
+    ggplot(pars, aes(x=Iter, y=pars[,.x])) +
       geom_line() + theme_bw() +
-      ylab(colnames(object$parsamp)[.x])
+      ylab(colnames(pars)[.x])
   )
   ml <- marrangeGrob(pl, nrow=4, ncol=4)
   ml
@@ -646,7 +647,8 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
   ngrid  <- object$dim[7]
   niter  <- object$dim[9]
   nsamp  <- object$dim[11]
-  pars   <- object$parsamp
+  pars   <- cbind(1:niter, object$parsamp)
+  colnames(pars)[1] <- "Iter"
   ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
 
   # Hyperparameters and data parameters
@@ -720,13 +722,14 @@ summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details 
   dimpars <- object$dim
   n       <- dimpars[1]
   p       <- dimpars[2]
+  q       <- dimpars[3]
   ngrid   <- dimpars[6]
   thin    <- dimpars[10]
   nsamp   <- dimpars[11]
-  pars    <- matrix(object$parsamp, nrow = nsamp)
+  pars    <- as.matrix(object$parsamp)
   ss      <- unique(pmax(1, round(nsamp * (1:ntrace/ntrace)))) # Index for which draws to use for trace plot
-
-  dimpars[9] <- length(ss)
+  ndraws  <- length(ss)
+  dimpars[9] <- ndraws
 
   # Deviance calculation
   sm <- .Call('corrQR_devianceCalc', PACKAGE='corrQR',
@@ -736,66 +739,62 @@ summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details 
               object$A, object$R,
               object$log.det, object$lp.grid, object$tau.g)
 
-  # sm <- .C("DEV",
-  #          pars  = as.double(pars[,ss]),
-  #          x     = as.double(object$x),
-  #          y     = as.double(object$y),
-  #          wt    = as.double(object$wt),
-  #          hyper = as.double(object$hyper),
-  #          dim   = as.integer(dimpars),
-  #          gridmats = as.double(object$gridmats),
-  #          tau.g    = as.double(object$tau.g),
-  #          devsamp  = double(length(ss)),
-  #          llsamp   = double(length(ss)*n),
-  #          pgsamp   = double(length(ss)*ngrid*(p+1)))
-
   deviance  <- sm$devsamp
-  ll        <- matrix(sm$llsamp, ncol = length(ss))
+  ll        <- as.matrix(sm$llsamp)
   fit.waic  <- waic(ll)
-  pg        <- matrix(sm$pgsamp, ncol = length(ss))
-  prox.samp <- matrix(NA, p+1, length(ss))
-  for(i in 1:(p+1)){
-    prox.samp[i,] <- object$prox[apply(pg[(i-1)*ngrid + 1:ngrid,], 2, function(pr) sample(length(pr), 1, prob = pr))]
-  }
+  # pg        <- sm$pgsamp
+  pg <- array(unlist(sm$pgsamp),
+              dim=c(dim(sm$pgsamp[[1]])[1],
+                    dim(sm$pgsamp[[1]])[2],
+                    dim(sm$pgsamp[[1]])[3],
+                    length(sm$pgsamp)))
 
-  if(more.details) par(mfrow = c(2,2), mar = c(5,4,3,2)+.1)
-  if(plot.dev){
-    plot(thin * ss, deviance, ty = "l", xlab = "Markov chain iteration", ylab = "Deviance", bty = "n", main = "Fit trace plot", ...)
-    grid(col = "gray")
-  }
-
-  if(more.details){
-    ngrid <- length(object$prox)
-    prior.grid <- exp(object$gridmats[nrow(object$gridmats),])
-    lam.priorsamp <- lamFn(sample(object$prox, ntrace, replace = TRUE, prob = prior.grid))
-    lam.prior.q <- quantile(lam.priorsamp, pr = c(.025, .5, .975))
-    lam.samp <- lamFn(prox.samp)
-    a <- min(lamFn(object$prox))
-    b <- diff(range(lamFn(object$prox))) * 1.2
-    plot(thin * ss, lam.samp[1,], ty = "n", ylim = a + c(0, b * (p + 1)), bty = "n", ann = FALSE, axes = FALSE)
-    axis(1)
+  prox.samp <- array(NA, dim=c(ndraws, p+1, q))
+  for(j in 1:q){
     for(i in 1:(p+1)){
-      abline(h = b * (i-1) + lamFn(object$prox), col = "gray")
-      abline(h = b * (i - 1) + lam.prior.q, col = "red", lty = c(2,1,2))
-      lines(thin * ss, b * (i-1) + lam.samp[i,], lwd = 1, col = 4)
-      if(i %% 2) axis(2, at = b * (i-1) + lamFn(object$prox[c(1,ngrid)]), labels = round(object$prox[c(1,ngrid)],2), las = 1, cex.axis = 0.6)
-      mtext(substitute(beta[index], list(index = i - 1)), side = 4, line = 0.5, at = a + b * (i - 1) + 0.4*b, las = 1)
+      prox.samp[,i,j] <- object$prox[apply(pg[,i,j,], 2, function(pr) sample(length(pr), 1, prob = pr))]
     }
-    title(xlab = "Markov chain iteration", ylab = "Proxmity posterior", main = "Mixing over GP scaling")
-
-    theta <- as.mcmc(t(matrix(object$parsamp, ncol = nsamp)[,unique(ceiling(seq(0.5*nsamp,nsamp,1)))]))
-    gg <- geweke.diag(theta, .1, .5)
-    zvals <- gg$z
-
-    pp <- 2 * (1 - pnorm(abs(zvals)))
-    plot(sort(pp), ylab = "Geweke p-values", xlab = "Parameter index (reordered)", main = "Convergence diagnosis", ty = "h", col = 4, ylim = c(0, 0.3), lwd = 2)
-    abline(h = 0.05, col = 2, lty = 2)
-    abline(a = 0, b = 0.1 / length(pp), col = 2, lty = 2)
-    mtext(c("BH-10%", "5%"), side = 4, at = c(0.1, 0.05), line = 0.1, las = 0, cex = 0.6)
-
-    npar <- length(object$par)
-    image(1:npar, 1:npar, cor(theta), xlab = "Parameter index", ylab = "Parameter index", main = "Parameter correlation")
-
   }
-  invisible(list(deviance = deviance, pg = pg, prox = prox.samp, ll = ll, waic = fit.waic))
+
+  # if(more.details) par(mfrow = c(2,2), mar = c(5,4,3,2)+.1)
+  # if(plot.dev){
+  #   plot(thin * ss, deviance, ty = "l", xlab = "Markov chain iteration", ylab = "Deviance", bty = "n", main = "Fit trace plot", ...)
+  #   grid(col = "gray")
+  # }
+  #
+  # if(more.details){
+  #   ngrid <- length(object$prox)
+  #   prior.grid <- exp(object$gridmats[nrow(object$gridmats),])
+  #   lam.priorsamp <- lamFn(sample(object$prox, ntrace, replace = TRUE, prob = prior.grid))
+  #   lam.prior.q <- quantile(lam.priorsamp, pr = c(.025, .5, .975))
+  #   lam.samp <- lamFn(prox.samp)
+  #   a <- min(lamFn(object$prox))
+  #   b <- diff(range(lamFn(object$prox))) * 1.2
+  #   plot(thin * ss, lam.samp[1,], ty = "n", ylim = a + c(0, b * (p + 1)), bty = "n", ann = FALSE, axes = FALSE)
+  #   axis(1)
+  #   for(i in 1:(p+1)){
+  #     abline(h = b * (i-1) + lamFn(object$prox), col = "gray")
+  #     abline(h = b * (i - 1) + lam.prior.q, col = "red", lty = c(2,1,2))
+  #     lines(thin * ss, b * (i-1) + lam.samp[i,], lwd = 1, col = 4)
+  #     if(i %% 2) axis(2, at = b * (i-1) + lamFn(object$prox[c(1,ngrid)]), labels = round(object$prox[c(1,ngrid)],2), las = 1, cex.axis = 0.6)
+  #     mtext(substitute(beta[index], list(index = i - 1)), side = 4, line = 0.5, at = a + b * (i - 1) + 0.4*b, las = 1)
+  #   }
+  #   title(xlab = "Markov chain iteration", ylab = "Proxmity posterior", main = "Mixing over GP scaling")
+  #
+  #   theta <- as.mcmc(t(matrix(object$parsamp, ncol = nsamp)[,unique(ceiling(seq(0.5*nsamp,nsamp,1)))]))
+  #   gg <- geweke.diag(theta, .1, .5)
+  #   zvals <- gg$z
+  #
+  #   pp <- 2 * (1 - pnorm(abs(zvals)))
+  #   plot(sort(pp), ylab = "Geweke p-values", xlab = "Parameter index (reordered)", main = "Convergence diagnosis", ty = "h", col = 4, ylim = c(0, 0.3), lwd = 2)
+  #   abline(h = 0.05, col = 2, lty = 2)
+  #   abline(a = 0, b = 0.1 / length(pp), col = 2, lty = 2)
+  #   mtext(c("BH-10%", "5%"), side = 4, at = c(0.1, 0.05), line = 0.1, las = 0, cex = 0.6)
+  #
+  #   npar <- length(object$par)
+  #   image(1:npar, 1:npar, cor(theta), xlab = "Parameter index", ylab = "Parameter index", main = "Parameter correlation")
+  #
+  # }
+
+  invisible(list(deviance = sm$devsamp, ll = sm$llsamp, pgsamp = pg, prox = prox.samp, waic = fit.waic))
 }
