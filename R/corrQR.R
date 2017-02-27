@@ -756,11 +756,12 @@ summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details 
     }
   }
 
-  devplot <- ggplot(data=data.frame(X=thin*ss, Deviance=deviance), aes(x=X, y=Deviance)) +
-    geom_line() + labs(x=("Markov chain iteration"), title="Fit trace plot") + theme_bw()
+  if(plot.dev == TRUE){
+    devplot <- ggplot(data=data.frame(X=thin*ss, Deviance=deviance), aes(x=X, y=Deviance)) +
+      geom_line() + labs(x=("Markov chain iteration"), title="Fit trace plot") + theme_bw()
 
-  devplot
-
+    print(devplot)
+  }
   # if(more.details) par(mfrow = c(2,2), mar = c(5,4,3,2)+.1)
 
   if(more.details){
