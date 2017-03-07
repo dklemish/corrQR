@@ -1,9 +1,7 @@
 corrQR <- function(x, y, sd, Rcorr,
                    nsamp = 1e3, thin = 10,
                    incr = 0.01,
-                   #initPar = "prior",
-                   ip,
-                   #copula = "gaussian",
+                   ip = NULL,
                    nknots = 6,
                    hyper = list(sig = c(.1,.1),
                                 lam = c(6,4),
@@ -14,7 +12,7 @@ corrQR <- function(x, y, sd, Rcorr,
                    blocking = "by.response",
                    expo = 2,
                    blocks.mu, blocks.S,
-                   fix.nu = FALSE, fix.corr = TRUE){
+                   fix.nu = FALSE, fix.corr = FALSE){
   # Input parameters:
   #  x - Predictors (n by p matrix)
   #  y - Response (n by q matrix)
@@ -91,6 +89,7 @@ corrQR <- function(x, y, sd, Rcorr,
   # plus additional points in the tail based on the # of data points
 
   Ltail <- ceiling(log(n*incr,2)) # of points in tail
+  # Ltail <- ceiling(log(n*1000*incr,2)) # of points in tail
 
   # tau.g = grid of quantiles
   # L = # of quantiles
@@ -200,23 +199,23 @@ corrQR <- function(x, y, sd, Rcorr,
   #  Copula parameters
   #    q*npar + 1:ncorr = copula parameters
 
-  par <- rep(0, tot.par)
-
   set.seed(sd)
 
   # Initialize w functions, gamma0, gamma, sigma & nu
-  # if(initPar == "prior"){
-  #   for(j in 1:q){
-  #     suppressWarnings(
-  #       invis <- capture.output(
-  #         par[(j-1)*npar + 1:npar] <-
-  #           qrjoint(x, y[,j], nsamp = 100, thin=1)$par
-  #       )
-  #     )
-  #   }
-  # }else if(initPar == "user"){
-  par <- ip
-  # }
+  par <- rep(0, tot.par)
+
+  if(is.null(ip)){
+    for(j in 1:q){
+      suppressWarnings(
+        invis <- capture.output(
+          par[(j-1)*npar + 1:npar] <-
+            qrjoint(x, y[,j], nsamp = 100, thin=1)$par
+        )
+      )
+    }
+  }else{
+    par <- ip
+  }
 
   # Build list that contains which indices of parameter vector
   # should be updated in each block update in each MCMC iteration
@@ -400,11 +399,10 @@ corrQR <- function(x, y, sd, Rcorr,
   oo$dmcmcpar <- dmcmc.par
   oo$runtime  <- tm.cpp[3]
 
-  samples <- as.data.frame(cbind(1:nsamp, oo$parsamp))
+  samples  <- as.data.frame(oo$parsamp)
   parnames <- colnames(samples)
 
-  parnames[1] <- "Iter"
-  reach       <- 2
+  reach <- 1
 
   for(i in 1:q){
     for(j in 0:p){
@@ -510,10 +508,12 @@ trace.plot <- function(object){
   npar    <- (nknots+1) * (p+1) + 2
   totpar  <- npar*q + ncorr
 
+  pars <- cbind(1:nrow(object$parsamp), object$parsamp)
+  colnames(pars)[1] <- "Iter"
   pl <- lapply(2:(totpar+1), function(.x)
-    ggplot(object$parsamp, aes(x=Iter, y=object$parsamp[,.x])) +
+    ggplot(pars, aes(x=Iter, y=pars[,.x])) +
       geom_line() + theme_bw() +
-      ylab(colnames(object$parsamp)[.x])
+      ylab(colnames(pars)[.x])
   )
   ml <- marrangeGrob(pl, nrow=4, ncol=4)
   ml
@@ -647,7 +647,8 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
   ngrid  <- object$dim[7]
   niter  <- object$dim[9]
   nsamp  <- object$dim[11]
-  pars   <- object$parsamp
+  pars   <- cbind(1:niter, object$parsamp)
+  colnames(pars)[1] <- "Iter"
   ss <- unique(round(nsamp * seq(burn.perc, 1, len = nmc + 1)[-1]))
 
   # Hyperparameters and data parameters
@@ -703,8 +704,8 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
           labs(x=expression(tau),
                y="Coefficient",
                title=colnames(b.median[[i]])[.x])
-          # xlab(expression(tau)) +
-          # ylab(colnames(b.median[[i]])[.x])
+        # xlab(expression(tau)) +
+        # ylab(colnames(b.median[[i]])[.x])
       )
       ml <- marrangeGrob(pl,
                          nrow=nr, ncol=nc,
@@ -714,127 +715,110 @@ coef.corrQR <- function(object, burn.perc = 0.5, nmc = 200,
   }
 
   invisible(list(beta.samp=beta.samp, beta.est=beta.est))
-
 }
-# coef.qrjoint <- function(object, burn.perc = 0.5, nmc = 200, plot = FALSE, show.intercept = TRUE, reduce = TRUE, ...){
 
+summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details = FALSE){
+  # Extract necessary fields from output object
+  dimpars <- object$dim
+  n       <- dimpars[1]
+  p       <- dimpars[2]
+  q       <- dimpars[3]
+  ngrid   <- dimpars[7]
+  thin    <- dimpars[10]
+  nsamp   <- dimpars[11]
+  pars    <- as.matrix(object$parsamp)
+  ss      <- unique(pmax(1, round(nsamp * (1:ntrace/ntrace)))) # Index for which draws to use for trace plot
+  ndraws  <- length(ss)
+  dimpars[9] <- ndraws
 
-#
-#   if(plot){
-#     nr <- ceiling(sqrt(p+show.intercept))
-#     nc <- ceiling((p+show.intercept)/nr)
-#     par(mfrow = c(nr, nc))
-#   }
-#
-#   reach <- 0
-#   beta.hat <- list()
-#   plot.titles <- c("Intercept", object$xnames)
-#   j <- 1
-#   b <- beta.samp[reach + 1:L,]
-#
-#   beta.hat[[j]] <-
-#     getBands(b, plot = (plot & show.intercept),
-#              add = FALSE,
-#              x = tau.g,
-#              xlab = "tau",
-#              ylab = "Coefficient", bty = "n", ...)
-#
-#   if(plot & show.intercept) title(main = plot.titles[j])
-#
-#   reach <- reach + L
-#
-#   for(j in 2:(p+1)){
-#     b <- beta.samp[reach + 1:L,]
-#     beta.hat[[j]] <-
-#       getBands(b, plot = plot,
-#                add = FALSE,
-#                x = tau.g,
-#                xlab = "tau",
-#                ylab = "Coefficient", bty = "n", ...)
-#     if(plot) {
-#       title(main = plot.titles[j])
-#       abline(h = 0, lty = 2, col = 4)
-#     }
-#
-#     reach <- reach + L
-#   }
-#
-#   names(beta.hat) <- plot.titles
-#
-#   invisible(list(beta.samp = beta.samp, beta.est = beta.hat))
-# }
+  # Deviance calculation
+  sm <- .Call('corrQR_devianceCalc', PACKAGE='corrQR',
+              pars[ss,],
+              object$x, object$y,
+              object$hyper, dimpars,
+              object$A, object$R,
+              object$log.det, object$lp.grid, object$tau.g)
 
-# getBands <- function(b, col = 2, lwd = 1,
-#                      plot = TRUE, add = FALSE,
-#                      x = seq(0,1,len=nrow(b)), remove.edges = TRUE, ...){
-#
-#   colRGB   <- col2rgb(col)/255
-#   colTrans <- rgb(colRGB[1], colRGB[2], colRGB[3], alpha = 0.2)
-#
-#   b.med <- apply(b, 1, quantile, pr = .5)
-#   b.lo <- apply(b, 1, quantile, pr = .025)
-#   b.hi <- apply(b, 1, quantile, pr = 1 - .025)
-#
-#   L <- nrow(b)
-#   ss <- 1:L; ss.rev <- L:1
-#
-#   if(remove.edges){
-#     ss <- 2:(L-1); ss.rev <- (L-1):2
-#   }
-#   if(plot){
-#     if(!add)
-#       plot(x[ss], b.med[ss], ty = "n", ylim = range(c(b.lo[ss], b.hi[ss])), ...)
-#
-#     polygon(x[c(ss, ss.rev)], c(b.lo[ss], b.hi[ss.rev]), col = colTrans, border = colTrans)
-#     lines(x[ss], b.med[ss], col = col, lwd = lwd)
-#   }
-#   invisible(cbind(b.lo, b.med, b.hi))
-# }
+  deviance  <- sm$devsamp
+  ll        <- as.matrix(sm$llsamp)
+  fit.waic  <- waic(ll)
+  # pg        <- sm$pgsamp
+  pg <- array(unlist(sm$pgsamp),
+              dim=c(dim(sm$pgsamp[[1]])[1],
+                    dim(sm$pgsamp[[1]])[2],
+                    dim(sm$pgsamp[[1]])[3],
+                    length(sm$pgsamp)))
 
-# estFn <- function(par, x, y, gridmats, L, mid, nknots, ngrid, a.kap, a.sig, tau.g, reg.ix, reduce = TRUE, x.ce = 0, x.sc = 1, base.bundle){
-#
-#   n <- length(y)
-#   p <- ncol(x)
-#   wKnot <- matrix(par[1:(nknots*(p+1))], nrow = nknots)
-#   w0PP  <- ppFn0(wKnot[,1], gridmats, L, nknots, ngrid)
-#   w0    <- w0PP$w
-#   wPP   <- apply(wKnot[,-1,drop=FALSE], 2, ppFn, gridmats = gridmats, L = L, nknots = nknots, ngrid = ngrid, a.kap = a.kap)
-#   wMat  <- matrix(sapply(wPP, extract, vn = "w"), ncol = p)
-#
-#   zeta0.dot <- exp(shrinkFn(p) * (w0 - max(w0)))
-#   zeta0     <- trape(zeta0.dot[-c(1,L)], tau.g[-c(1,L)], L-2)
-#   zeta0.tot <- zeta0[L-2]
-#   zeta0     <- c(0, tau.g[2] + (tau.g[L-1]-tau.g[2])*zeta0 / zeta0.tot, 1)
-#   zeta0.dot <- (tau.g[L-1]-tau.g[2])*zeta0.dot / zeta0.tot
-#   zeta0.dot[c(1,L)] <- 0
-#   zeta0.ticks <- pmin(L-1, pmax(1, sapply(zeta0, function(u) sum(tau.g <= u))))
-#   zeta0.dists <- (zeta0 - tau.g[zeta0.ticks]) / (tau.g[zeta0.ticks+1] - tau.g[zeta0.ticks])
-#   vMat      <- apply(wMat, 2, transform.grid, ticks = zeta0.ticks, dists = zeta0.dists)
-#
-#   reach <- nknots*(p+1)
-#   gam0 <- par[reach + 1]; reach <- reach + 1
-#   gam <- par[reach + 1:p]; reach <- reach + p
-#   sigma <- sigFn(par[reach + 1], a.sig); reach <- reach + 1
-#   nu <- nuFn(par[reach + 1]);
-#
-#   b0dot <- sigma * base.bundle$q0(zeta0, nu) * zeta0.dot
-#   beta0.hat <- rep(NA, L)
-#   beta0.hat[mid:L] <- gam0 + trape(b0dot[mid:L], tau.g[mid:L], L - mid + 1)
-#   beta0.hat[mid:1] <- gam0 + trape(b0dot[mid:1], tau.g[mid:1], mid)
-#
-#   vNorm  <- sqrt(rowSums(vMat^2))
-#   a      <- tcrossprod(vMat, x)
-#   aX     <- apply(-a, 1, max)/vNorm
-#   aX[is.nan(aX)] <- Inf
-#   aTilde <- vMat / (aX * sqrt(1 + vNorm^2))
-#   ab0    <- b0dot * aTilde
-#
-#   beta.hat <- kronecker(rep(1,L), t(gam))
-#   beta.hat[mid:L,] <- beta.hat[mid:L,] + apply(ab0[mid:L,,drop=FALSE], 2, trape, h = tau.g[mid:L], len = L - mid + 1)
-#   beta.hat[mid:1,] <- beta.hat[mid:1,] + apply(ab0[mid:1,,drop=FALSE], 2, trape, h = tau.g[mid:1], len = mid)
-#   beta.hat <- beta.hat / x.sc
-#   beta0.hat <- beta0.hat - rowSums(beta.hat * x.ce)
-#   betas <- cbind(beta0.hat, beta.hat)
-#   if(reduce) betas <- betas[reg.ix,,drop = FALSE]
-#   return(betas)
-# }
+  prox.samp <- array(NA, dim=c(ndraws, p+1, q))
+  for(j in 1:q){
+    for(i in 1:(p+1)){
+      prox.samp[,i,j] <- object$prox[apply(pg[,i,j,], 2, function(pr) sample(length(pr), 1, prob = pr))]
+    }
+  }
+
+  if(plot.dev == TRUE){
+    devplot <- ggplot(data=data.frame(X=thin*ss, Deviance=deviance), aes(x=X, y=Deviance)) +
+      geom_line() + labs(x=("Markov chain iteration"), title="Fit trace plot") + theme_bw()
+
+    print(devplot)
+  }
+  # if(more.details) par(mfrow = c(2,2), mar = c(5,4,3,2)+.1)
+
+  if(more.details){
+    ngrid         <- length(object$prox)
+    prior.grid    <- exp(object$lp.grid)
+    lam.priorsamp <- lamFn(sample(object$prox, ntrace, replace = TRUE, prob = prior.grid))
+    lam.prior.q   <- quantile(lam.priorsamp, pr = c(.025, .5, .975))
+
+    lam.samp <- array(NA, dim=c(nsamp, p+1, q))
+
+    for(i in 1:q){
+      lam.samp[,,i] <- lamFn(prox.samp[,,i])
+    }
+
+    a <- min(lamFn(object$prox))
+    b <- diff(range(lamFn(object$prox))) * 1.2
+
+    for(j in 1:q){
+      plot(thin * ss, lam.samp[,1,1], ty = "n", ylim = a + c(0, b * (p + 1)), bty = "n", ann = FALSE, axes = FALSE)
+      axis(1)
+      for(i in 1:(p+1)){
+        abline(h = b * (i-1) + lamFn(object$prox), col = "gray")
+        abline(h = b * (i - 1) + lam.prior.q, col = "red", lty = c(2,1,2))
+        lines(thin * ss, b * (i-1) + lam.samp[,i,j], lwd = 1, col = 4)
+        if(i %% 2) axis(2, at = b * (i-1) + lamFn(object$prox[c(1,ngrid)]), labels = round(object$prox[c(1,ngrid)],2), las = 1, cex.axis = 0.6)
+        mtext(substitute(beta[index], list(index = i - 1)), side = 4, line = 0.5, at = a + b * (i - 1) + 0.4*b, las = 1)
+      }
+      title(xlab = "Markov chain iteration",
+            ylab = "Proxmity posterior",
+            main = paste("Mixing over GP scaling - Response", j))
+    }
+
+    #   plot(thin * ss, lam.samp[1,], ty = "n", ylim = a + c(0, b * (p + 1)), bty = "n", ann = FALSE, axes = FALSE)
+    #   axis(1)
+    #   for(i in 1:(p+1)){
+    #     abline(h = b * (i-1) + lamFn(object$prox), col = "gray")
+    #     abline(h = b * (i - 1) + lam.prior.q, col = "red", lty = c(2,1,2))
+    #     lines(thin * ss, b * (i-1) + lam.samp[i,], lwd = 1, col = 4)
+    #     if(i %% 2) axis(2, at = b * (i-1) + lamFn(object$prox[c(1,ngrid)]), labels = round(object$prox[c(1,ngrid)],2), las = 1, cex.axis = 0.6)
+    #     mtext(substitute(beta[index], list(index = i - 1)), side = 4, line = 0.5, at = a + b * (i - 1) + 0.4*b, las = 1)
+    #   }
+    #   title(xlab = "Markov chain iteration", ylab = "Proxmity posterior", main = "Mixing over GP scaling")
+    #
+    #   theta <- as.mcmc(t(matrix(object$parsamp, ncol = nsamp)[,unique(ceiling(seq(0.5*nsamp,nsamp,1)))]))
+    #   gg <- geweke.diag(theta, .1, .5)
+    #   zvals <- gg$z
+    #
+    #   pp <- 2 * (1 - pnorm(abs(zvals)))
+    #   plot(sort(pp), ylab = "Geweke p-values", xlab = "Parameter index (reordered)", main = "Convergence diagnosis", ty = "h", col = 4, ylim = c(0, 0.3), lwd = 2)
+    #   abline(h = 0.05, col = 2, lty = 2)
+    #   abline(a = 0, b = 0.1 / length(pp), col = 2, lty = 2)
+    #   mtext(c("BH-10%", "5%"), side = 4, at = c(0.1, 0.05), line = 0.1, las = 0, cex = 0.6)
+    #
+    #   npar <- length(object$par)
+    #   image(1:npar, 1:npar, cor(theta), xlab = "Parameter index", ylab = "Parameter index", main = "Parameter correlation")
+    #
+    # }
+  }
+  invisible(list(deviance = sm$devsamp, ll = sm$llsamp, pgsamp = pg, prox = prox.samp, waic = fit.waic))
+}

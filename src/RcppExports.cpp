@@ -32,3 +32,23 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// devianceCalc
+SEXP devianceCalc(SEXP pars_, SEXP x_, SEXP y_, SEXP hyper_, SEXP dim_, SEXP A_, SEXP R_, SEXP LOGDET_, SEXP LPGRID_, SEXP tauG_);
+RcppExport SEXP corrQR_devianceCalc(SEXP pars_SEXP, SEXP x_SEXP, SEXP y_SEXP, SEXP hyper_SEXP, SEXP dim_SEXP, SEXP A_SEXP, SEXP R_SEXP, SEXP LOGDET_SEXP, SEXP LPGRID_SEXP, SEXP tauG_SEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< SEXP >::type pars_(pars_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type x_(x_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type y_(y_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type hyper_(hyper_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type dim_(dim_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type A_(A_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type R_(R_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type LOGDET_(LOGDET_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type LPGRID_(LPGRID_SEXP);
+    Rcpp::traits::input_parameter< SEXP >::type tauG_(tauG_SEXP);
+    rcpp_result_gen = Rcpp::wrap(devianceCalc(pars_, x_, y_, hyper_, dim_, A_, R_, LOGDET_, LPGRID_, tauG_));
+    return rcpp_result_gen;
+END_RCPP
+}

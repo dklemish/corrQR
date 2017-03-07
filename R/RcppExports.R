@@ -5,3 +5,7 @@ corr_qr_fit <- function(par_, x_, y_, hyper_, dim_, A_, R_, LOGDET_, LPGRID_, ta
     .Call('corrQR_corr_qr_fit', PACKAGE = 'corrQR', par_, x_, y_, hyper_, dim_, A_, R_, LOGDET_, LPGRID_, tauG_, muV_, SV_, blocks_, blockSizes_, dmcmcpar_, imcmcpar_)
 }
 
+devianceCalc <- function(pars_, x_, y_, hyper_, dim_, A_, R_, LOGDET_, LPGRID_, tauG_) {
+    .Call('corrQR_devianceCalc', PACKAGE = 'corrQR', pars_, x_, y_, hyper_, dim_, A_, R_, LOGDET_, LPGRID_, tauG_)
+}
+

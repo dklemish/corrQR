@@ -43,7 +43,7 @@ double logPosterior(const vec &, bool llonly);
 double log_dGaussCopula(const mat &, const mat &);
 
 void MCMC(void);
-void adMCMC(void);
+mat rInvWish(const double, const mat &);
 
 SEXP corr_qr_fit(SEXP par_,
                  SEXP x_,
@@ -61,6 +61,17 @@ SEXP corr_qr_fit(SEXP par_,
                  SEXP blockSizes_,
                  SEXP dmcmcpar_,
                  SEXP imcmcpar_);
+
+SEXP devianceCalc(SEXP pars_,
+                  SEXP x_,
+                  SEXP y_,
+                  SEXP hyper,
+                  SEXP dim_,
+                  SEXP A_,
+                  SEXP R_,
+                  SEXP LOGDET_,
+                  SEXP LPGRID_,
+                  SEXP tauG_);
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
                       List Ag, List Rg, List muV, List SV,
@@ -105,6 +116,7 @@ int niter;    // MCMC iterations
 int thin;     // thinning factor
 int nsamp;    // # of MCMC samples to keep
 int npar;     // # parameters to track per response variable
+int nrespar;  // # of response parameters = q * npar
 int totpar;   // # of total parameters
 int nblocks;  // # of MH blocks
 bool verbose; // flag to print intermediate calc's
@@ -163,7 +175,9 @@ vec Q0_med;   // (n x 1)
 vec vNormSq;
 vec wknot;    // (m x 1)
 vec zknot;    // (m x 1)
-mat llmat;    // log-likelihood by obs (n x q)
+mat llmat;    // log-likelihood by obs (n x (q+1)) - first q columns are
+//  contribution of q-th response for ith obs; last column is
+//  contribution of copula for ith obs
 vec llgrid;   // MV t-dist contrib to loglikelihood (G x 1)
 
 vec lps0;     // (q x 1)
@@ -247,7 +261,8 @@ SEXP corr_qr_fit(SEXP par_,
   thin    = DIM[9];
   nsamp   = DIM[10];
   npar    = (m+1) * (p+1) + 2;
-  totpar  = q*npar + ncorr;
+  nrespar = q*npar;
+  totpar  = nrespar + ncorr;
   nblocks = IMCMCPAR[0];
   refresh = IMCMCPAR[1];
   verbose = (bool) IMCMCPAR[2];
@@ -289,7 +304,7 @@ SEXP corr_qr_fit(SEXP par_,
   vNormSq  = vec(L, fill::zeros);
   wknot    = vec(m, fill::zeros);
   zknot    = vec(m, fill::zeros);
-  llmat    = mat(n, q, fill::zeros);
+  llmat    = mat(n, q+1, fill::zeros);
   llgrid   = vec(G, fill::zeros);
 
   lps0     = vec(q, fill::zeros);
@@ -321,13 +336,14 @@ SEXP corr_qr_fit(SEXP par_,
   }
   Rcorr = symmatu(Rcorr);
 
-  adMCMC();
+  MCMC();
 
   return Rcpp::List::create(Rcpp::Named("parsamp") = parStore.t(),
                             Rcpp::Named("lpsamp") = lpSample,
                             Rcpp::Named("acptsamp") = acceptSample,
                             Rcpp::Named("blockMu") = mu,
-                            Rcpp::Named("blockCov") = S);
+                            Rcpp::Named("blockCov") = S,
+                            Rcpp::Named("tau_y_x") = tau_y_x);
 }
 
 void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector hyp,
@@ -384,20 +400,33 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   return;
 }
 
-double log_dGaussCopula(const mat &U, const mat &Rc){
+// double log_dGaussCopula(const mat &U, const mat &Rc){
+//   // Note no checks that U contains values in [0,1]
+//   int i, j;
+//   double d = det(Rc);
+//   double result = 0;
+//
+//   vec phi_inv_u = vec(q);
+//
+//   for(i = 0; i < n; i++){
+//     for(j = 0; j < q; j++){
+//       phi_inv_u[j] = R::qnorm(U.at(i,j), 0, 1, 1, 0);
+//     }
+//     result += -0.5 * (log(d) + as_scalar(phi_inv_u.t() * (Rc.i() - eye(q,q)) * phi_inv_u));
+//   }
+
+double log_dGaussCopula(const vec &U, const mat &Rc){
   // Note no checks that U contains values in [0,1]
-  int i, j;
+  int j;
   double d = det(Rc);
   double result = 0;
 
   vec phi_inv_u = vec(q);
 
-  for(i = 0; i < n; i++){
-    for(j = 0; j < q; j++){
-      phi_inv_u[j] = R::qnorm(U.at(i,j), 0, 1, 1, 0);
-    }
-    result += -0.5 * (log(d) + as_scalar(phi_inv_u.t() * (Rc.i() - eye(q,q)) * phi_inv_u));
+  for(j = 0; j < q; j++){
+    phi_inv_u[j] = R::qnorm(U[j], 0, 1, 1, 0);
   }
+  result = -0.5 * (log(d) + as_scalar(phi_inv_u.t() * (Rc.i() - eye(q,q)) * phi_inv_u));
 
   return result;
 }
@@ -677,13 +706,16 @@ double logPosterior(const vec &par, bool llonly){
     }
   }
 
-  // Calculate contribution to loglikelihood from marginal distributions for
-  // each response
+  // Calculate contribution to loglikelihood from copula distribution
+  for(i = 0; i < n; i++){
+    llmat.at(i, q) = log_dGaussCopula(conv_to< vec >::from(tau_y_x.row(i)), Rcorr);
+  }
+
+  // Calculate total loglikelihood
   lp = arma::accu(llmat);
   if(std::isnan(lp)) lp = -std::numeric_limits<double>::infinity();
 
-  // Calculate contribution to loglikelihood from copula distribution
-  lp += log_dGaussCopula(tau_y_x, Rcorr);
+  // lp += log_dGaussCopula(tau_y_x, Rcorr);
 
   if(!llonly){
     lp += accu(lps0);
@@ -762,7 +794,7 @@ double lf0tail(double x){
   return R::dt(x, 0.1, 1);
 }
 
-void adMCMC(void){
+void MCMC(void){
   int b, i, j;
   int u = 0;
   int g = 0;
@@ -799,6 +831,26 @@ void adMCMC(void){
   std::vector<vec>  par_incr(nblocks);
   std::vector<mat>  R(nblocks); // Chol factor of MCMC block proposal covariances
 
+  // Data structures for sampling correlation matrices
+  mat D(q, q, arma::fill::zeros);
+  mat S_samp(q, q, arma::fill::zeros);
+  mat Sigma(q, q, arma::fill::zeros);
+  mat D_inv(q, q, arma::fill::zeros);
+
+  // Liu & Daniels
+  // mat epsilon(n, q);
+  // mat R_prop(q,q);
+  // double log_det_current;
+  // double log_det_proposed;
+  // double accept_prob;
+
+  // Barnard et. al
+  mat R_inv(q, q, arma::fill::zeros);
+  vec alpha_samp(q, arma::fill::zeros);
+  mat eps_star(q, n, arma::fill::zeros);
+  mat Z(n, q);
+  double z;
+
   // Initialize variables
   for(b=0; b < nblocks; b++){
     // Dynamically allocate ragged arrays
@@ -828,6 +880,8 @@ void adMCMC(void){
   parStore.col(0) = parSample;
   lpval = logPosterior(parSample, FALSE);
   if(verbose) Rcout << "Initial lp = " << lpval << std::endl;
+
+  // log_det_current = log(det(Rcorr));
 
   // Adaptive Metropolis MCMC
   for(iter = 0; iter < niter; iter++){
@@ -866,8 +920,66 @@ void adMCMC(void){
       run_counter[b]++;
     }
 
+    if(!fix_corr){
+      // Sample new correlation matrix
+
+      // Liu & Daniels
+      // for(i=0; i < q; i++){
+      //   for(j=0; j < n; j++){
+      //     D.at(i,i) += pow(tau_y_x.at(j,i),2);
+      //   }
+      // }
+      // epsilon = tau_y_x * D;
+      //
+      // for(j=0; j < n; j++){
+      //   S_samp += epsilon.row(j).t() * epsilon.row(j);
+      // }
+      // Sigma  = rInvWish(n, S_samp);
+      // D_inv  = diagmat(pow(Sigma.diag(), -0.5));
+      // R_prop = D_inv * Sigma * D_inv;
+      // log_det_proposed = log(det(R_prop));
+      // accept_prob = std::min(1.0, exp(-((q+1)/2) * (log_det_proposed - log_det_current)));
+      // if(as<double>(runif(1)) < accept_prob){
+      //   Rcorr = R_prop;
+      //   Rcout << "Corr = " << Rcorr.at(0,1) << std::endl;
+      //   log_det_current = log_det_proposed;
+      //   lpval = logPosterior(parSample, FALSE);
+      // }
+
+      // Barnard et al.
+      for(i = 0; i < n; i++){
+        for(j = 0; j < q; j++){
+          z = R::qnorm(tau_y_x.at(i,j), 0.0, 1.0, 1, 0);
+          if(z == std::numeric_limits<double>::infinity()){
+            z = 10;
+          }
+          else if(z == -std::numeric_limits<double>::infinity()){
+            z = -10;
+          }
+          Z.at(i,j) = z;
+        }
+      }
+
+      R_inv      = arma::inv_sympd(Rcorr);
+      alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
+      D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
+      D_inv      = arma::inv(D);
+      eps_star   = D * Z.t();
+      S_samp     = eps_star * eps_star.t();
+      Sigma      = rInvWish(n + q + 1, S_samp);
+      D_inv      = diagmat(pow(Sigma.diag(), -0.5));
+      Rcorr      = D_inv * Sigma * D_inv;
+
+      lpval = logPosterior(parSample, FALSE);
+    }
+
     // Store results at appropriate iterations
     if((iter+1) % thin == 0){
+      for(i=0; i < q-1; i++){
+        for(j=i+1; j < q; j++){
+          parSample.at(nrespar + i*q + j - 1) = Rcorr.at(i,j);
+        }
+      }
       lpSample[store_lp++]           = lpval;
       parStore.col(store_par++)      = parSample;
       acceptSample.row(store_acpt++) = alpha.t();
@@ -914,4 +1026,185 @@ void adMCMC(void){
     }
   }
   PutRNGstate();
+}
+
+mat rInvWish(const double nu, const mat &S){
+  int i, j;
+
+  mat L = chol(inv(S));
+  mat A = mat(q, q, arma::fill::zeros);
+
+  for(i = 0; i < q; i++){
+    A.at(i,i) = sqrt(as<double>(rchisq(1, nu-i)));
+  }
+
+  // Memory access is faster going in column order
+  for(j = 0; j < q; j++){
+    for(i = j+1; i < q; i++){
+      A.at(i, j) = as<double>(rnorm(1, 0 ,1));
+    }
+  }
+
+  return inv(L * A * (L*A).t());
+}
+
+
+// [[Rcpp::export]]
+SEXP devianceCalc(SEXP pars_,
+                  SEXP x_,
+                  SEXP y_,
+                  SEXP hyper_,
+                  SEXP dim_,
+                  SEXP A_,
+                  SEXP R_,
+                  SEXP LOGDET_,
+                  SEXP LPGRID_,
+                  SEXP tauG_){
+  /***** Initialization *****/
+  // Temp variables
+  int reach, i;
+  NumericMatrix tempA;
+  NumericMatrix tempR;
+  mat posteriorSamples;
+
+  // Input data
+  // Convert SEXP objects to Rcpp objects
+  NumericMatrix PARS   = as<NumericMatrix>(pars_);
+  NumericMatrix X      = as<NumericMatrix>(x_);
+  NumericMatrix Y      = as<NumericMatrix>(y_);
+  NumericVector HYP    = as<NumericVector>(hyper_);
+  IntegerVector DIM    = as<IntegerVector>(dim_);
+  List Ag              = as<List>(A_);
+  List Rg              = as<List>(R_);
+  NumericVector LOGDET = as<NumericVector>(LOGDET_);
+  NumericVector LPGRID = as<NumericVector>(LPGRID_);
+  NumericVector TAU_G  = as<NumericVector>(tauG_);
+
+  x       = mat(X.begin(), X.nrow(), X.ncol(), TRUE);
+  y       = mat(Y.begin(), Y.nrow(), Y.ncol(), TRUE);
+  posteriorSamples = mat(PARS.begin(), PARS.nrow(), PARS.ncol(), TRUE);
+  taugrid = vec(TAU_G.begin(), TAU_G.size(), TRUE);
+  ldRgrid = vec(LOGDET.begin(), LOGDET.size(), TRUE);
+  lpgrid  = vec(LPGRID.begin(), LPGRID.size(), TRUE);
+
+  // Dimensions
+  n     = DIM[0];
+  p     = DIM[1];
+  q     = DIM[2];
+  L     = DIM[3];
+  mid   = DIM[4];
+  m     = DIM[5];
+  G     = DIM[6];
+  nkap  = DIM[7];
+  ncorr = DIM[11];
+
+  par_position   = (p+1)*m;
+  gam_pos_offset = p - 1;
+
+  // MCMC parameters
+  niter   = DIM[8];
+  thin    = DIM[9];
+  nsamp   = DIM[10];
+  npar    = (m+1) * (p+1) + 2;
+  nrespar = q*npar;
+  totpar  = nrespar + ncorr;
+
+  // Prior parameters
+  Agrid   = cube(L, m, G);
+  Rgrid   = cube(m, m, G);
+
+  akap  = vec(nkap);
+  bkap  = vec(nkap);
+  lpkap = vec(nkap);
+
+  // Initialize mixture components for prior on kappa_j
+  for(reach = 2, i = 0; i < nkap; i++){
+    akap[i]  = HYP[reach++];
+    bkap[i]  = HYP[reach++];
+    lpkap[i] = HYP[reach++];
+  }
+
+  for(i = 0; i < G; i++){
+    tempA = as<NumericMatrix>(Ag[i]);
+    Agrid.slice(i) = mat(tempA.begin(), tempA.nrow(), tempA.ncol(), TRUE);
+
+    tempR = as<NumericMatrix>(Rg[i]);
+    Rgrid.slice(i) = mat(tempR.begin(), tempR.nrow(), tempR.ncol(), TRUE);
+  }
+
+  // Parameters
+  gam0     = 0;
+  sigma    = 1;
+  nu       = 1;
+  gam      = vec(p, fill::zeros);
+  zeta0    = vec(L, fill::zeros);
+  zeta0dot = vec(L, fill::zeros);
+
+  w0       = mat(L, q, fill::zeros);
+  wMat     = cube(L, p, q, fill::zeros);
+  vMat     = cube(L, p, q, fill::zeros);
+
+  Rcorr    = mat(q, q, fill::eye);
+
+  // Intermediate calculations
+  tau_y_x  = mat(n, q, fill::zeros);
+  wgrid    = mat(L, G, fill::zeros);
+  a        = mat(n, L, fill::zeros);
+  aX       = vec(L, fill::zeros);
+  aTilde   = mat(n, L, fill::zeros);
+  vTilde   = mat(L, p, fill::zeros);
+  b0dot    = vec(L, fill::zeros);
+  bdot     = mat(L, p, fill::zeros);
+  Q0_med   = vec(n, fill::zeros);
+  vNormSq  = vec(L, fill::zeros);
+  wknot    = vec(m, fill::zeros);
+  zknot    = vec(m, fill::zeros);
+  llmat    = mat(n, q+1, fill::zeros);
+  llgrid   = vec(G, fill::zeros);
+
+  lps0     = vec(q, fill::zeros);
+  resLin   = vec(n, fill::zeros);
+  Q0Pos    = vec(L, fill::zeros);
+  Q0Neg    = vec(L, fill::zeros);
+  bPos     = mat(L, p, fill::zeros);
+  bNeg     = mat(L, p, fill::zeros);
+
+  pgvec    = cube(G, p+1, q, fill::zeros);
+  lb       = vec(10, fill::zeros);
+  lw       = vec(nkap, fill::zeros);
+
+  // Output
+  vec devSample = vec(niter, fill::zeros);    // deviance
+  mat llSample  = mat(n, niter, fill::zeros); // observation log-likelihood
+  field<cube> pgSample(niter);                // posterior lambda values
+
+  for(int iter = 0; iter < niter; iter++){
+    // Read in draw from posterior
+    parSample = conv_to< vec >::from(posteriorSamples.row(iter));
+
+    // Convert portion of parameter vector corresponding to correlation matrix
+    // to actual matrix
+    reach = 0;
+    for(int i = 0; i < (q-1); i++){
+      for(int j = i+1; j < q; j++){
+        Rcorr.at(i,j) = parSample[q*npar + reach];
+        reach++;
+      }
+    }
+    Rcorr = symmatu(Rcorr);
+
+    // Store deviance
+    devSample[iter] = -2.0 * logPosterior(parSample, true);
+
+    // Calculate log-likelihood contribution from each observation from llmat
+    llSample.col(iter) = sum(llmat, 1);
+
+    // Store posterior weights on the lambda grid for each GP function for
+    // each response
+    pgSample(iter) = pgvec;
+  }
+
+  return Rcpp::List::create(Rcpp::Named("devsamp") = devSample,
+                            Rcpp::Named("llsamp") = llSample,
+                            Rcpp::Named("pgsamp") = pgSample);
 }
