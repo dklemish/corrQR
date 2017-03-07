@@ -17,7 +17,8 @@ Y2 <- rep(NA, n)
 rho <- 0.9
 U   <- rCopula(n, normalCopula(rho, dim=2, dispstr = "un"))
 Y1  <- qgamma(U[,1], shape=4 + X1, rate=1)
-Y2  <- qgamma(U[,2], shape=X2^2, rate=2)
+# Y2  <- qgamma(U[,2], shape=X2^2, rate=2)
+Y2  <- qgamma(U[,2], shape=3*X2, rate=2)
 
 X   <- data.frame(X1 = X1, X2=X2)
 Y   <- data.frame(Y1 = Y1, Y2=Y2)
@@ -32,7 +33,7 @@ plot(Y1[X1==15 & X2==10], Y2[X1==15 & X2==10])
 plot(Y1[X1==20 & X2==10], Y2[X1==20 & X2==10])
 par(mfrow=c(1,1))
 
-test1 <- corrQR(X, Y, 6, nsamp=200, thin=5)
+test1 <- corrQR(X, Y, 6, nsamp=1000, thin=5)
 
 
 

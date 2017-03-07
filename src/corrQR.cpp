@@ -400,21 +400,6 @@ void Init_Prior_Param(int L, int m, int G, int nblocks, int nkap, NumericVector 
   return;
 }
 
-// double log_dGaussCopula(const mat &U, const mat &Rc){
-//   // Note no checks that U contains values in [0,1]
-//   int i, j;
-//   double d = det(Rc);
-//   double result = 0;
-//
-//   vec phi_inv_u = vec(q);
-//
-//   for(i = 0; i < n; i++){
-//     for(j = 0; j < q; j++){
-//       phi_inv_u[j] = R::qnorm(U.at(i,j), 0, 1, 1, 0);
-//     }
-//     result += -0.5 * (log(d) + as_scalar(phi_inv_u.t() * (Rc.i() - eye(q,q)) * phi_inv_u));
-//   }
-
 double log_dGaussCopula(const vec &U, const mat &Rc){
   // Note no checks that U contains values in [0,1]
   int j;
@@ -537,7 +522,6 @@ void trapeReverse(double *x, double *h, int length, double *integral){
 
   return;
 }
-
 
 double sigFn(double z) {
   return exp(z/2.0);
@@ -1031,7 +1015,7 @@ void MCMC(void){
 mat rInvWish(const double nu, const mat &S){
   int i, j;
 
-  mat L = chol(inv(S));
+  mat L = chol(inv(S), "lower");
   mat A = mat(q, q, arma::fill::zeros);
 
   for(i = 0; i < q; i++){
