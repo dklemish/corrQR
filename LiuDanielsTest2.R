@@ -5,9 +5,10 @@ library(ggplot2)
 
 set.seed(6)
 
-Q      <- ncol(tau2)
-n.obs  <- nrow(tau2)
+Q      <- 3
+n.obs  <- 1000
 n.samp <- 10000
+R <- matrix(c(1, 0.8, -0.3, 0.8, 1, -0.5, -0.3, -0.5, 1), nrow=Q)
 
 # Liu & Daniels paper
 R.samp <- array(0, dim=c(Q,Q,n.samp))
@@ -20,17 +21,17 @@ uniform.accept.draws <- runif(n.samp)
 
 # Target prior \propto 1
 # Candidiate prior \propto |R|^((Q+1)/2)
-
-Z <- tau2
-
-# Calculate current D since \sum Z_{ij}^2 = d_{jj}^{-2} \forall j
-D <- diag(apply(Z^2, 2, sum)^(-0.5))
-
-# Calculate parameter expansion & draw new sigma matrix
-epsilon <- Z %*% D
-S       <- matrix(apply(apply(epsilon, 1, function(x) x %*% t(x)), 1, sum), nrow=Q)
-
 for(i in 2:n.samp){
+  Z <- rmvnorm(n.obs, sigma=R)
+  #Zt <- t(Z)
+
+  # Calculate current D since \sum Z_{ij}^2 = d_{jj}^{-2} \forall j
+  D <- diag(apply(Z^2, 2, sum)^(-0.5))
+
+  # Calculate parameter expansion & draw new sigma matrix
+  epsilon <- Z %*% D
+  S       <- matrix(apply(apply(epsilon, 1, function(x) x %*% t(x)), 1, sum),
+                    nrow=Q)
   Sigma   <- riwish(n.obs, S)
 
   # Drawing Sigma implicitly draws new D & R, so calculate new D & R
@@ -56,19 +57,33 @@ ggplot() +
                  aes(x, ..density..),
                  binwidth=0.0025) +
   theme_bw()
+ggplot() +
+  geom_histogram(data=data.frame(x=R.samp[1,3,101:n.samp]),
+                 aes(x, ..density..),
+                 binwidth=0.0025) +
+  theme_bw()
+ggplot() +
+  geom_histogram(data=data.frame(x=R.samp[2,3,101:n.samp]),
+                 aes(x, ..density..),
+                 binwidth=0.0025) +
+  theme_bw()
+
 
 ### Tabet thesis
 R.samp2      <- array(0, dim=c(Q,Q,n.samp))
-alpha.samp   <- matrix(0, nrow=n.samp, ncol = Q)
-R.samp2[,,1] <- diag(Q)
+#alpha.samp   <- matrix(0, nrow=n.samp, ncol = Q)
+R.samp2[,,1] <- 0.5*diag(Q)
 
 for(i in 2:n.samp){
   Z <- rmvnorm(n.obs, sigma=R)
   Zt <- t(Z)
 
   curr.R.inv     <- solve(R.samp2[,,i-1])
-  alpha.samp[i,] <- rgamma(n = Q, shape=(Q+1)/2, rate=1)
-  D              <- diag(sqrt(diag(curr.R.inv)/(2*alpha.samp[i,])))
+  #alpha.samp[i,] <- rgamma(n = Q, shape=(Q+1)/2, rate=1)
+  #alpha.samp     <- rgamma(n = Q, shape=(Q+1)/2, rate=1)
+  alpha.samp <- c(3,2,1)
+  #D              <- diag(sqrt(diag(curr.R.inv)/(2*alpha.samp[i,])))
+  D              <- diag(sqrt(diag(curr.R.inv)/(2*alpha.samp)))
   D.inv          <- solve(D)
   eps.star       <- D %*% Zt
   S              <- eps.star %*% t(eps.star)

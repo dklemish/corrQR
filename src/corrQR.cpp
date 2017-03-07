@@ -838,18 +838,18 @@ void MCMC(void){
   mat D_inv(q, q, arma::fill::zeros);
 
   // Liu & Daniels
-  mat epsilon(n, q);
-  mat R_prop(q,q);
-  double log_det_current;
-  double log_det_proposed;
-  double accept_prob;
+  // mat epsilon(n, q);
+  // mat R_prop(q,q);
+  // double log_det_current;
+  // double log_det_proposed;
+  // double accept_prob;
 
   // Barnard et. al
-  // mat R_inv(q, q, arma::fill::zeros);
-  // vec alpha_samp(q, arma::fill::zeros);
-  // mat eps_star(q, n, arma::fill::zeros);
-  // mat Z(n, q);
-  // double z;
+  mat R_inv(q, q, arma::fill::zeros);
+  vec alpha_samp(q, arma::fill::zeros);
+  mat eps_star(q, n, arma::fill::zeros);
+  mat Z(n, q);
+  double z;
 
   // Initialize variables
   for(b=0; b < nblocks; b++){
@@ -924,53 +924,53 @@ void MCMC(void){
       // Sample new correlation matrix
 
       // Liu & Daniels
-      for(i=0; i < q; i++){
-        for(j=0; j < n; j++){
-          D.at(i,i) += pow(tau_y_x.at(j,i),2);
-        }
-      }
-      epsilon = tau_y_x * D;
-
-      for(j=0; j < n; j++){
-        S_samp += epsilon.row(j).t() * epsilon.row(j);
-      }
-      Sigma  = rInvWish(n, S_samp);
-      D_inv  = diagmat(pow(Sigma.diag(), -0.5));
-      R_prop = D_inv * Sigma * D_inv;
-      log_det_proposed = log(det(R_prop));
-      accept_prob = std::min(1.0, exp(-((q+1)/2) * (log_det_proposed - log_det_current)));
-      if(as<double>(runif(1)) < accept_prob){
-        Rcorr = R_prop;
-        Rcout << "Corr = " << Rcorr.at(0,1) << std::endl;
-        log_det_current = log_det_proposed;
-        lpval = logPosterior(parSample, FALSE);
-      }
-
-      // Barnard et al.
-      // for(i = 0; i < n; i++){
-      //   for(j = 0; j < q; j++){
-      //     z = R::qnorm(tau_y_x.at(i,j), 0.0, 1.0, 1, 0);
-      //     if(z == std::numeric_limits<double>::infinity()){
-      //       z = 10;
-      //     }
-      //     else if(z == -std::numeric_limits<double>::infinity()){
-      //       z = -10;
-      //     }
-      //     Z.at(i,j) = z;
+      // for(i=0; i < q; i++){
+      //   for(j=0; j < n; j++){
+      //     D.at(i,i) += pow(tau_y_x.at(j,i),2);
       //   }
       // }
+      // epsilon = tau_y_x * D;
       //
-      // R_inv      = arma::inv_sympd(Rcorr);
-      // alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
-      // D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
-      // D_inv      = arma::inv(D);
-      // eps_star   = D * Z.t();
-      // S_samp     = eps_star * eps_star.t();
-      // Sigma      = rInvWish(n + q + 1, S_samp);
-      // D_inv      = diagmat(pow(Sigma.diag(), -0.5));
-      // Rcorr      = D_inv * Sigma * D_inv;
-      //
-      // lpval = logPosterior(parSample, FALSE);
+      // for(j=0; j < n; j++){
+      //   S_samp += epsilon.row(j).t() * epsilon.row(j);
+      // }
+      // Sigma  = rInvWish(n, S_samp);
+      // D_inv  = diagmat(pow(Sigma.diag(), -0.5));
+      // R_prop = D_inv * Sigma * D_inv;
+      // log_det_proposed = log(det(R_prop));
+      // accept_prob = std::min(1.0, exp(-((q+1)/2) * (log_det_proposed - log_det_current)));
+      // if(as<double>(runif(1)) < accept_prob){
+      //   Rcorr = R_prop;
+      //   Rcout << "Corr = " << Rcorr.at(0,1) << std::endl;
+      //   log_det_current = log_det_proposed;
+      //   lpval = logPosterior(parSample, FALSE);
+      // }
+
+      // Barnard et al.
+      for(i = 0; i < n; i++){
+        for(j = 0; j < q; j++){
+          z = R::qnorm(tau_y_x.at(i,j), 0.0, 1.0, 1, 0);
+          if(z == std::numeric_limits<double>::infinity()){
+            z = 10;
+          }
+          else if(z == -std::numeric_limits<double>::infinity()){
+            z = -10;
+          }
+          Z.at(i,j) = z;
+        }
+      }
+
+      R_inv      = arma::inv_sympd(Rcorr);
+      alpha_samp = as<arma::vec>(rgamma(q, (double)(q+1)/2, 1.0));
+      D          = diagmat(sqrt(R_inv.diag() / (2*alpha_samp)));
+      D_inv      = arma::inv(D);
+      eps_star   = D * Z.t();
+      S_samp     = eps_star * eps_star.t();
+      Sigma      = rInvWish(n + q + 1, S_samp);
+      D_inv      = diagmat(pow(Sigma.diag(), -0.5));
+      Rcorr      = D_inv * Sigma * D_inv;
+
+      lpval = logPosterior(parSample, FALSE);
     }
 
     // Store results at appropriate iterations

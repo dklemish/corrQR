@@ -32,7 +32,7 @@ plot(Y1[X1==15 & X2==10], Y2[X1==15 & X2==10])
 plot(Y1[X1==20 & X2==10], Y2[X1==20 & X2==10])
 par(mfrow=c(1,1))
 
-test1 <- corrQR(X, Y, 6)
+test1 <- corrQR(X, Y, 6, nsamp=200, thin=5)
 
 
 
