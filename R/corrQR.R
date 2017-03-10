@@ -822,3 +822,38 @@ summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details 
   }
   invisible(list(deviance = sm$devsamp, ll = sm$llsamp, pgsamp = pg, prox = prox.samp, waic = fit.waic))
 }
+
+bivarPlot <- function(object, burn.perc = 0.5, newX, selectY = c(1,2), Ylim, grid.size=100){
+  # Dimension parameters
+  n      <- object$dim[1]
+  p      <- object$dim[2]
+  q      <- object$dim[3]
+  L      <- object$dim[4]
+  mid    <- object$dim[5] + 1
+  nknots <- object$dim[6]
+  ngrid  <- object$dim[7]
+  niter  <- object$dim[9]
+  nsamp  <- object$dim[11]
+  ss     <- round((nsamp*burn.perc+1)):nsamp   # Post-burn iterations to use
+
+  # Define grid at which to evaluate likelihood function
+  if(missing(Ylim)){
+    Ylim <- list()
+    Ylim[[1]] <- c(min(object$y[,selectY[1]]), max(object$y[,selectY[1]]))
+    Ylim[[2]] <- c(min(object$y[,selectY[2]]), max(object$y[,selectY[2]]))
+  }
+
+  evalY_pts <- expand.grid(seq(Ylim[[1]][1], Ylim[[1]][2], length=5),
+                           seq(Ylim[[2]][1], Ylim[[2]][2], length=5))
+
+  # bivarDensity<- .Call('corrQR_devianceCalc', PACKAGE='corrQR',
+  #                      newX,
+  #                      selectY,
+  #                      object$parsamp[ss,],
+  #                      object$x, object$y,
+  #                      object$hyper, dimpars,
+  #                      object$A, object$R,
+  #                      object$log.det, object$lp.grid, object$tau.g)
+  #
+
+}

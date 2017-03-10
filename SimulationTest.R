@@ -1,14 +1,16 @@
 library(copula)
 library(corrQR)
+library(ggplot2)
+library(gridExtra)
 
 set.seed(4)
 
 ### Model 1
 # Set up variables
-X1 <- rep(seq(1:20),50)
+X1 <- rep(seq(1:10),200)
 X1 <- X1[order(X1)]
 n  <- length(X1)
-X2 <- rep(seq(1:10),100)
+X2 <- rep(seq(1:10),200)
 
 Y1 <- rep(NA, n)
 Y2 <- rep(NA, n)
@@ -17,46 +19,36 @@ Y2 <- rep(NA, n)
 rho <- 0.9
 U   <- rCopula(n, normalCopula(rho, dim=2, dispstr = "un"))
 Y1  <- qgamma(U[,1], shape=4 + X1, rate=1)
-# Y2  <- qgamma(U[,2], shape=X2^2, rate=2)
-Y2  <- qgamma(U[,2], shape=3*X2, rate=2)
+Y2  <- qgamma(U[,2], shape=5*X2, rate=2)
 
 X   <- data.frame(X1 = X1, X2=X2)
 Y   <- data.frame(Y1 = Y1, Y2=Y2)
 
-plot(X2, Y2, xlim=c(1,20))
-lines(X1, Y1, col="blue", type="p")
+dat <- data.frame(X1=X1, X2=X2, Y1=Y1, Y2=Y2)
 
-par(mfrow=c(2,2))
-plot(Y1[X1==5 & X2==5], Y2[X1==5 & X2==5])
-plot(Y1[X1==10 & X2==5], Y2[X1==10 & X2==5])
-plot(Y1[X1==15 & X2==10], Y2[X1==15 & X2==10])
-plot(Y1[X1==20 & X2==10], Y2[X1==20 & X2==10])
-par(mfrow=c(1,1))
+# Plot data
+g1 <- ggplot(data=dat[X1==2 & X2==2,]) +
+  geom_point(aes(x=Y1, y=Y2), color="blue") +
+  labs(x=bquote(Y[1]~'|'~X[1]==2~','~X[2]==2),
+       y=bquote(Y[2]~'|'~X[1]==2~','~X[2]==2)) +
+  theme_bw()
+g2 <- ggplot(data=dat[X1==2 & X2==8,]) +
+  geom_point(aes(x=Y1, y=Y2), color="blue") +
+  labs(x=bquote(Y[1]~'|'~X[1]==2~','~X[2]==8),
+       y=bquote(Y[2]~'|'~X[1]==2~','~X[2]==8)) +
+  theme_bw()
+g3 <- ggplot(data=dat[X1==5 & X2==5,]) +
+  geom_point(aes(x=Y1, y=Y2), color="blue") +
+  labs(x=bquote(Y[1]~'|'~X[1]==5~','~X[2]==5),
+       y=bquote(Y[2]~'|'~X[1]==5~','~X[2]==5)) +
+  theme_bw()
+g4 <- ggplot(data=dat[X1==10 & X2==10,]) +
+  geom_point(aes(x=Y1, y=Y2), color="blue") +
+  labs(x=bquote(Y[1]~'|'~X[1]==10~','~X[2]==10),
+       y=bquote(Y[2]~'|'~X[1]==10~','~X[2]==10)) +
+  theme_bw()
+grid.arrange(g1, g2, g3, g4, ncol=2)
 
-test1 <- corrQR(X, Y, 6, nsamp=1000, thin=5)
-
-
-
-# Generate mixture components
-mix1 <- rbinom(n, 1, X/100)
-X.1  <- X[mix1==0]
-X.2  <- X[mix1==1]
-
-Y1[mix1==0] <- qnorm(U[mix1==0, 1], mean=X.1, sd=4)
-Y1[mix1==1] <- qnorm(U[mix1==1, 1], mean=3.5*log(X.2)^2, sd=X.2/10)
-
-Y2 <- qinvgamma(U[,2], shape = 2*log(X), rate = 2*X)
-
-plot(X, Y1, ylim=c(min(Y1, Y2), max(Y1, Y2)))
-lines(X, Y2, col="red", type="p")
-
-par(mfrow=c(2,2))
-plot(Y1[X==6], Y2[X==6])
-plot(Y1[X==12], Y2[X==12])
-plot(Y1[X==18], Y2[X==18])
-plot(Y1[X==24], Y2[X==24])
-par(mfrow=c(1,1))
-
-plot(X[mix1==0], Y1[mix1==0])
-lines(X[mix1==1], Y1[mix1==1], col="red", type="p")
-
+# Fit model
+test1 <- corrQR(X, Y, 6, nsamp=2000, thin=5)
+coef(test1, nr=2, nc=2)
