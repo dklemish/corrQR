@@ -1,4 +1,4 @@
-corrQR <- function(x, y, sd, Rcorr,
+corrQR <- function(x, y, sd = NULL, Rcorr,
                    nsamp = 1e3, thin = 10,
                    incr = 0.01,
                    ip = NULL,
@@ -209,7 +209,8 @@ corrQR <- function(x, y, sd, Rcorr,
       suppressWarnings(
         invis <- capture.output(
           par[(j-1)*npar + 1:npar] <-
-            qrjoint(x, y[,j], nsamp = 100, thin=1)$par
+            # qrjoint(x, y[,j], nsamp = 100, thin=1)$par
+            qrjoint(x, y[,j], nsamp = 10, thin=1)$par
         )
       )
     }
@@ -317,6 +318,12 @@ corrQR <- function(x, y, sd, Rcorr,
       }
 
       blocks.S[[q*(p+3) + 1]] <- as.matrix(bdiag(slist))
+
+      # Perturb diagonal for numerical stability
+      for(i in 1:nblocks){
+        diag(blocks.S[[i]]) <- diag(blocks.S[[i]]) + 1e-6
+      }
+
     } else if(blocking == "by.function"){
       for(j in 1:q){
         for(i in 1:(p+1)){
@@ -353,6 +360,11 @@ corrQR <- function(x, y, sd, Rcorr,
       }
 
       blocks.S[[p+4]] <- as.matrix(bdiag(slist))
+
+      # Perturb diagonal for numerical stability
+      for(i in 1:nblocks){
+        diag(blocks.S[[i]]) <- diag(blocks.S[[i]]) + 1e-6
+      }
     }
   }
 
@@ -823,7 +835,10 @@ summary.corrQR <- function(object, ntrace = 1000, plot.dev = TRUE, more.details 
   invisible(list(deviance = sm$devsamp, ll = sm$llsamp, pgsamp = pg, prox = prox.samp, waic = fit.waic))
 }
 
-bivarPlot <- function(object, burn.perc = 0.5, newX, selectY = c(1,2), Ylim, grid.size=100){
+bivarPlot <- function(object, burn.perc = 0.5, newX,
+                      selectY = c(1,2), Ylim,
+                      neval = 20, ngrid=100,
+                      post.summary="median"){
   # Dimension parameters
   n      <- object$dim[1]
   p      <- object$dim[2]
@@ -836,24 +851,52 @@ bivarPlot <- function(object, burn.perc = 0.5, newX, selectY = c(1,2), Ylim, gri
   nsamp  <- object$dim[11]
   ss     <- round((nsamp*burn.perc+1)):nsamp   # Post-burn iterations to use
 
-  # Define grid at which to evaluate likelihood function
+  ### Define grid at which to evaluate likelihood function
+  # 1: Define range of grid
   if(missing(Ylim)){
     Ylim <- list()
     Ylim[[1]] <- c(min(object$y[,selectY[1]]), max(object$y[,selectY[1]]))
     Ylim[[2]] <- c(min(object$y[,selectY[2]]), max(object$y[,selectY[2]]))
   }
 
-  evalY_pts <- expand.grid(seq(Ylim[[1]][1], Ylim[[1]][2], length=5),
-                           seq(Ylim[[2]][1], Ylim[[2]][2], length=5))
+  # 2: Define grid at which to evaluate actual likelihood function
+  evalY <- as.matrix(
+    expand.grid(seq(Ylim[[1]][1], Ylim[[1]][2], length=neval),
+                seq(Ylim[[2]][1], Ylim[[2]][2], length=neval)))
 
-  # bivarDensity<- .Call('corrQR_devianceCalc', PACKAGE='corrQR',
-  #                      newX,
-  #                      selectY,
-  #                      object$parsamp[ss,],
-  #                      object$x, object$y,
-  #                      object$hyper, dimpars,
-  #                      object$A, object$R,
-  #                      object$log.det, object$lp.grid, object$tau.g)
-  #
+  # 3: Define grid at which to approximate likelihood function based on
+  # values calculated at evalY grid above
+  resultY <- as.matrix(
+    expand.grid(seq(Ylim[[1]][1], Ylim[[1]][2], length=ngrid),
+                seq(Ylim[[2]][1], Ylim[[2]][2], length=ngrid)))
 
+  ### Define which columns of posterior samples are necessary for the two chosen responses
+  npar <- (p+1) * (nknots+1) + 2
+  vars.needed <- c((selectY[1]-1)*npar + (1:npar),
+                   (selectY[2]-1)*npar + (1:npar),
+                   q*npar + (selectY[1]-1) + (selectY[2]-1))
+
+  # Posterior samples give a distribution of the likelihood function; this option
+  #  allows a user-specified summary of the distribution of the likelihood function
+  if(post.summary=="median"){
+    summary.type <- 0
+  } else if(post.summary=="mean"){
+    summary.type <- 1
+  }
+  else{
+    stop("Only \"median\" or \"mean\" are valid posterior summary types.")
+  }
+
+  bivarDensity<- .Call('corrQR_bivarDensity', PACKAGE='corrQR',
+                       newX,
+                       selectY - 1,
+                       neval, ngrid,
+                       evalY, resultY,
+                       as.matrix(object$parsamp[ss,vars.needed]),
+                       object$hyper, object$dim,
+                       object$A, object$R,
+                       object$log.det, object$lp.grid, object$tau.g,
+                       summary.type)
+
+  return(invisible(bivarDensity))
 }

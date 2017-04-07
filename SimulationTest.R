@@ -2,6 +2,7 @@ library(copula)
 library(corrQR)
 library(ggplot2)
 library(gridExtra)
+library(qrjoint)
 
 set.seed(4)
 
@@ -27,28 +28,28 @@ Y   <- data.frame(Y1 = Y1, Y2=Y2)
 dat <- data.frame(X1=X1, X2=X2, Y1=Y1, Y2=Y2)
 
 # Plot data
-g1 <- ggplot(data=dat[X1==2 & X2==2,]) +
-  geom_point(aes(x=Y1, y=Y2), color="blue") +
-  labs(x=bquote(Y[1]~'|'~X[1]==2~','~X[2]==2),
-       y=bquote(Y[2]~'|'~X[1]==2~','~X[2]==2)) +
-  theme_bw()
-g2 <- ggplot(data=dat[X1==2 & X2==8,]) +
-  geom_point(aes(x=Y1, y=Y2), color="blue") +
-  labs(x=bquote(Y[1]~'|'~X[1]==2~','~X[2]==8),
-       y=bquote(Y[2]~'|'~X[1]==2~','~X[2]==8)) +
-  theme_bw()
-g3 <- ggplot(data=dat[X1==5 & X2==5,]) +
-  geom_point(aes(x=Y1, y=Y2), color="blue") +
-  labs(x=bquote(Y[1]~'|'~X[1]==5~','~X[2]==5),
-       y=bquote(Y[2]~'|'~X[1]==5~','~X[2]==5)) +
-  theme_bw()
-g4 <- ggplot(data=dat[X1==10 & X2==10,]) +
-  geom_point(aes(x=Y1, y=Y2), color="blue") +
-  labs(x=bquote(Y[1]~'|'~X[1]==10~','~X[2]==10),
-       y=bquote(Y[2]~'|'~X[1]==10~','~X[2]==10)) +
-  theme_bw()
-grid.arrange(g1, g2, g3, g4, ncol=2)
+# g1 <- ggplot(data=dat[X1==2 & X2==2,]) +
+#   geom_point(aes(x=Y1, y=Y2), color="blue") +
+#   labs(x=bquote(Y[1]~'|'~X[1]==2~','~X[2]==2), y=bquote(Y[2]~'|'~X[1]==2~','~X[2]==2)) +
+#   theme_bw()
+# g2 <- ggplot(data=dat[X1==2 & X2==8,]) +
+#   geom_point(aes(x=Y1, y=Y2), color="blue") +
+#   labs(x=bquote(Y[1]~'|'~X[1]==2~','~X[2]==8), y=bquote(Y[2]~'|'~X[1]==2~','~X[2]==8)) +
+#   theme_bw()
+# g3 <- ggplot(data=dat[X1==5 & X2==5,]) +
+#   geom_point(aes(x=Y1, y=Y2), color="blue") +
+#   labs(x=bquote(Y[1]~'|'~X[1]==5~','~X[2]==5), y=bquote(Y[2]~'|'~X[1]==5~','~X[2]==5)) +
+#   theme_bw()
+# g4 <- ggplot(data=dat[X1==10 & X2==10,]) +
+#   geom_point(aes(x=Y1, y=Y2), color="blue") +
+#   labs(x=bquote(Y[1]~'|'~X[1]==10~','~X[2]==10), y=bquote(Y[2]~'|'~X[1]==10~','~X[2]==10)) +
+#   theme_bw()
+# grid.arrange(g1, g2, g3, g4, ncol=2)
 
 # Fit model
-test1 <- corrQR(X, Y, 6, nsamp=2000, thin=5)
-coef(test1, nr=2, nc=2)
+test <- corrQR(X, Y, 6, nsamp=2000, thin=5)
+coef(test, nr=2, nc=2)
+
+test1.qr <- qrjoint(X, Y[,1], nsamp=2000, thin=5)
+test2.qr <- qrjoint(X, Y[,2], nsamp=2000, thin=5)
+

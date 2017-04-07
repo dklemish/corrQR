@@ -607,6 +607,11 @@ double logPosterior(const vec &par, bool llonly){
     for(l = 0; l < L; l++)
       vNormSq[l] = pow(norm(vMat.slice(k).row(l)),2);
 
+    // Rcout << "1" << std::endl;
+    //
+    // x.print("x");
+    // vMat.print("vMat");
+
     if(vNormSq.min() > 0.0){
       //** 5. a_i for each observation i & quantile l
       a = x * vMat.slice(k).t();  // a is n x L
@@ -614,6 +619,7 @@ double logPosterior(const vec &par, bool llonly){
       //** 6. a_chi for each l & tilde{a}_il for each obs i & quant l
       for(l = 0; l < L; l++){
         aX[l] = -a.col(l).min() / sqrt(vNormSq[l]);
+
         for(i = 0; i < p; i++){
           vTilde.at(l,i) = vMat.at(l,i,k) / (aX[l]*sqrt(1+vNormSq[l]));
           aTilde.at(i,l) = a.at(i,l) / (aX[l]*sqrt(1+vNormSq[l]));
@@ -787,6 +793,7 @@ void MCMC(void){
   int store_par=0;
   int store_acpt=0;
   int currBlockSize=0;
+  int reach;
 
   double lpval = 0;
   double lpvalnew = 0;
@@ -834,6 +841,8 @@ void MCMC(void){
   mat eps_star(q, n, arma::fill::zeros);
   mat Z(n, q);
   double z;
+
+  Rcout << "Start of MCMC" << std::endl;
 
   // Initialize variables
   for(b=0; b < nblocks; b++){
@@ -959,9 +968,11 @@ void MCMC(void){
 
     // Store results at appropriate iterations
     if((iter+1) % thin == 0){
+      reach = 0;
       for(i=0; i < q-1; i++){
         for(j=i+1; j < q; j++){
-          parSample.at(nrespar + i*q + j - 1) = Rcorr.at(i,j);
+          // parSample.at(nrespar + i*q + j - 1) = Rcorr.at(i,j);
+          parSample.at(nrespar + reach++) = Rcorr.at(i,j);
         }
       }
       lpSample[store_lp++]           = lpval;
@@ -998,6 +1009,7 @@ void MCMC(void){
           }
           S[b].at(i,i) = (1.0 - frac[b]) * S[b].at(i,i) + frac[b] * (parbar_chunk[b][i] - mu[b][i]) * (parbar_chunk[b][i] - mu[b][i]);
         }
+        // Rcout << "Iter " << iter << ", block " << b << std::endl;
         R[b]  = arma::chol(S[b], "upper");
 
         mu[b] = mu[b] + frac[b] * (parbar_chunk[b] - mu[b]);
@@ -1192,3 +1204,182 @@ SEXP devianceCalc(SEXP pars_,
                             Rcpp::Named("llsamp") = llSample,
                             Rcpp::Named("pgsamp") = pgSample);
 }
+
+// [[Rcpp::export]]
+SEXP bivarDensity(SEXP newX_,
+                  SEXP selectY_,
+                  SEXP neval_,
+                  SEXP ngrid_,
+                  SEXP Yeval_,
+                  SEXP Yres_,
+                  SEXP pSamples_,
+                  SEXP hyper_,
+                  SEXP dim_,
+                  SEXP A_,
+                  SEXP R_,
+                  SEXP LOGDET_,
+                  SEXP LPGRID_,
+                  SEXP tauG_,
+                  SEXP summaryType_){
+  /***** Initialization *****/
+  int i, j, k;
+  NumericMatrix tempA;
+  NumericMatrix tempR;
+
+  // Input data
+  // Convert SEXP objects to Rcpp & Armadillo objects
+  NumericVector newX    = as<NumericVector>(newX_);
+  NumericVector selectY = as<NumericVector>(selectY_);
+  int nEval             = as<int>(neval_);
+  int nGrid             = as<int>(ngrid_);
+  NumericMatrix Yeval   = as<NumericMatrix>(Yeval_);
+  NumericMatrix Yres    = as<NumericMatrix>(Yres_);
+  NumericMatrix pSamples = as<NumericMatrix>(pSamples_);
+  NumericVector HYP     = as<NumericVector>(hyper_);
+  IntegerVector DIM     = as<IntegerVector>(dim_);
+  List Ag               = as<List>(A_);
+  List Rg               = as<List>(R_);
+  NumericVector LOGDET  = as<NumericVector>(LOGDET_);
+  NumericVector LPGRID  = as<NumericVector>(LPGRID_);
+  NumericVector TAU_G   = as<NumericVector>(tauG_);
+  int summaryType       = as<int>(summaryType_);
+
+  vec X = vec(newX.begin(), newX.size(), false);
+  mat evalY = mat(Yeval.begin(), Yeval.nrow(), Yeval.ncol(), false);
+  mat resultY = mat(Yres.begin(), Yres.nrow(), Yres.ncol(), false);
+  mat postSamples = mat(pSamples.begin(), pSamples.nrow(), pSamples.ncol(), false);
+  taugrid = vec(TAU_G.begin(), TAU_G.size(), TRUE);
+  ldRgrid = vec(LOGDET.begin(), LOGDET.size(), TRUE);
+  lpgrid  = vec(LPGRID.begin(), LPGRID.size(), TRUE);
+
+  // Dimensions
+  n     = evalY.n_rows;
+  p     = DIM[1];
+  q     = 2;
+  L     = DIM[3];
+  mid   = DIM[4];
+  m     = DIM[5];
+  G     = DIM[6];
+  nkap  = DIM[7];
+  ncorr = DIM[11];
+
+  par_position   = (p+1)*m;
+  gam_pos_offset = p - 1;
+
+  // Prior parameters
+  Agrid   = cube(L, m, G);
+  Rgrid   = cube(m, m, G);
+
+  akap  = vec(nkap);
+  bkap  = vec(nkap);
+  lpkap = vec(nkap);
+
+  // Initialize mixture components for prior on kappa_j
+  for(int reach = 2, i = 0; i < nkap; i++){
+    akap[i]  = HYP[reach++];
+    bkap[i]  = HYP[reach++];
+    lpkap[i] = HYP[reach++];
+  }
+
+  for(i = 0; i < G; i++){
+    tempA = as<NumericMatrix>(Ag[i]);
+    Agrid.slice(i) = mat(tempA.begin(), tempA.nrow(), tempA.ncol(), TRUE);
+
+    tempR = as<NumericMatrix>(Rg[i]);
+    Rgrid.slice(i) = mat(tempR.begin(), tempR.nrow(), tempR.ncol(), TRUE);
+  }
+
+  // Parameters
+  gam0     = 0;
+  sigma    = 1;
+  nu       = 1;
+  gam      = vec(p, fill::zeros);
+  zeta0    = vec(L, fill::zeros);
+  zeta0dot = vec(L, fill::zeros);
+  w0       = mat(L, q, fill::zeros);
+  wMat     = cube(L, p, q, fill::zeros);
+  vMat     = cube(L, p, q, fill::zeros);
+
+  Rcorr    = mat(q, q, fill::eye);
+
+  // Intermediate calculations
+  tau_y_x  = mat(n, q, fill::zeros);
+  wgrid    = mat(L, G, fill::zeros);
+  a        = mat(n, L, fill::zeros);
+  aX       = vec(L, fill::zeros);
+  aTilde   = mat(n, L, fill::zeros);
+  vTilde   = mat(L, p, fill::zeros);
+  b0dot    = vec(L, fill::zeros);
+  bdot     = mat(L, p, fill::zeros);
+  Q0_med   = vec(n, fill::zeros);
+  vNormSq  = vec(L, fill::zeros);
+  wknot    = vec(m, fill::zeros);
+  zknot    = vec(m, fill::zeros);
+  llmat    = mat(n, q+1, fill::zeros);
+  llgrid   = vec(G, fill::zeros);
+
+  lps0     = vec(q, fill::zeros);
+  resLin   = vec(n, fill::zeros);
+  Q0Pos    = vec(L, fill::zeros);
+  Q0Neg    = vec(L, fill::zeros);
+  bPos     = mat(L, p, fill::zeros);
+  bNeg     = mat(L, p, fill::zeros);
+
+  pgvec    = cube(G, p+1, q, fill::zeros);
+  lb       = vec(10, fill::zeros);
+  lw       = vec(nkap, fill::zeros);
+
+  // Declare other variables
+  //*** Possible to delete? ***//
+  // int nSamp   = postSamples.n_rows;  // # of posterior samples
+  // mat llDist(n, nSamp);  // holds log-likelihood at each grid point for each sample
+
+  // Define a new matrix of covariates, where each row is equal to the new user provided vector newX.
+  //mat x(n, p);
+  for(i=0; i < n; i++){
+    x.row(i) = X.t();
+  }
+
+  // Define y (a single vector for each grid location) to be a matrix to reuse likelihood code
+  // which is written to evaluate log-lik for entire data matrix Y.
+  Rcout << "1" << std::endl;
+  mat y(1, 2);
+  Rcout << "2" << std::endl;
+
+  mat llResult(n, 3);
+
+  Rcout << "3" << std::endl;
+
+  vec parsToUse;
+
+  if(summaryType == 0){
+    // posterior median
+    Rcout << "4a" << std::endl;
+    parsToUse = median(postSamples, 0).t();
+  } else if(summaryType == 1){
+    // posterior mean
+    Rcout << "4b" << std::endl;
+    parsToUse = mean(postSamples, 0).t();
+  }
+
+  parsToUse.t().print("parsToUse");
+
+  // Calculate likelihood function at each evaluation grid point for each posterior sample
+
+  llResult.cols(0,1) = evalY;
+
+  for(i=0; i < n; i++){
+    y = evalY.row(i);
+    llResult.at(i,2) = logPosterior(parsToUse, true);
+  }
+
+  // Rcout << "n = " << n << std::endl;
+  // llResult.print("llResult");
+
+  return Rcpp::List::create(Rcpp::Named("Y") = evalY,
+                            Rcpp::Named("x") = x,
+                            Rcpp::Named("log_density") = llResult);
+}
+
+
+
